@@ -22,16 +22,52 @@ class ProxyApiClient {
     return Uri.parse('$normalized$path');
   }
 
+  Map<String, String> get _authHeaders => {'Authorization': 'Bearer $apiKey'};
+
   Map<String, String> get _jsonHeaders => {
-    'Authorization': 'Bearer $apiKey',
+    ..._authHeaders,
     'Content-Type': 'application/json',
   };
 
   Future<bool> testConnection() async {
-    final response = await _client
-        .get(_uri('/healthz'))
-        .timeout(const Duration(seconds: 8));
-    return response.statusCode == 200 && response.body.trim() == 'ok';
+    final health = await _getWithTimeout(
+      _uri('/healthz'),
+      unreachableMessage: '后端不可达，请检查地址或服务状态',
+    );
+    if (health.statusCode != 200 || health.body.trim() != 'ok') {
+      throw ProxyConnectionException(
+        '后端不可达，请检查地址或服务状态（HTTP ${health.statusCode}）',
+      );
+    }
+
+    final auth = await _getWithTimeout(
+      _uri('/v1/auth/test'),
+      headers: _authHeaders,
+      unreachableMessage: '后端可达，但密钥校验失败',
+    );
+    if (auth.statusCode == 401) {
+      throw const ProxyConnectionException('后端可达，但代理密钥无效');
+    }
+    if (auth.statusCode != 200 || auth.body.trim() != 'ok') {
+      throw ProxyConnectionException('后端可达，但密钥校验接口异常（HTTP ${auth.statusCode}）');
+    }
+    return true;
+  }
+
+  Future<http.Response> _getWithTimeout(
+    Uri uri, {
+    Map<String, String>? headers,
+    required String unreachableMessage,
+  }) async {
+    try {
+      return await _client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      throw ProxyConnectionException('$unreachableMessage：请求超时');
+    } catch (error) {
+      throw ProxyConnectionException('$unreachableMessage：$error');
+    }
   }
 
   Stream<String> streamChat({required List<ChatMessage> messages}) async* {
@@ -359,4 +395,13 @@ class ProxyApiException implements Exception {
     }
     return 'HTTP $statusCode: $trimmed';
   }
+}
+
+class ProxyConnectionException implements Exception {
+  const ProxyConnectionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

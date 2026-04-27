@@ -13,31 +13,94 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final _baseUrlController = TextEditingController();
+  final _apiKeyController = TextEditingController();
+
   bool _testing = false;
+  bool _saving = false;
   bool _resettingService = false;
+  bool _showApiKey = false;
+  String? _syncedBaseUrl;
+  String? _syncedApiKey;
   _ClearTarget? _clearing;
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _apiKeyController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final colors = Theme.of(context).colorScheme;
+    _syncServiceFields(app);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
         Text('服务', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.dns_outlined),
-          title: const Text('后端地址'),
-          subtitle: Text(app.config.baseUrl),
+        TextField(
+          controller: _baseUrlController,
+          enabled: !_resettingService,
+          keyboardType: TextInputType.url,
+          textInputAction: TextInputAction.next,
+          decoration: const InputDecoration(
+            labelText: '后端地址',
+            prefixIcon: Icon(Icons.dns_outlined),
+          ),
         ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: _testing || _resettingService ? null : _test,
-          icon: const Icon(Icons.network_check),
-          label: Text(_testing ? '测试中' : '测试连接'),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _apiKeyController,
+          enabled: !_resettingService,
+          obscureText: !_showApiKey,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            labelText: '代理密钥',
+            prefixIcon: const Icon(Icons.key_rounded),
+            suffixIcon: IconButton(
+              tooltip: _showApiKey ? '隐藏密钥' : '显示密钥',
+              onPressed: () => setState(() => _showApiKey = !_showApiKey),
+              icon: Icon(
+                _showApiKey
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _serviceActionDisabled(app) ? null : _save,
+                icon: _saving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(_saving ? '保存中' : '保存'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _serviceActionDisabled(app) ? null : _test,
+                icon: _testing
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.network_check),
+                label: Text(_testing ? '测试中' : '测试连接'),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         ListTile(
@@ -131,6 +194,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ).showSnackBar(SnackBar(content: Text(reset ? '服务配置已重置' : '当前任务运行中，无法重置')));
   }
 
+  Future<void> _save() async {
+    await _saveServiceSettings();
+  }
+
   Widget _clearTile({
     required AppState app,
     required ColorScheme colors,
@@ -162,20 +229,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _test() async {
-    final app = context.read<AppState>();
-    await app.saveSettings();
-    if (!mounted) {
+    final saved = await _saveServiceSettings(showSnackBar: false);
+    if (!saved || !mounted) {
       return;
     }
+    final app = context.read<AppState>();
     setState(() => _testing = true);
     final ok = await app.testConnection();
     if (!mounted) {
       return;
     }
     setState(() => _testing = false);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(ok ? '连接正常' : '连接失败')));
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(content: Text(ok ? '连接正常，密钥有效' : app.lastError ?? '连接失败')),
+      );
+  }
+
+  Future<bool> _saveServiceSettings({bool showSnackBar = true}) async {
+    final baseUrl = _baseUrlController.text.trim();
+    final apiKey = _apiKeyController.text.trim();
+    if (baseUrl.isEmpty || apiKey.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写后端地址和代理密钥')));
+      return false;
+    }
+
+    final app = context.read<AppState>();
+    setState(() => _saving = true);
+    try {
+      app.config = app.config.copyWith(baseUrl: baseUrl);
+      app.apiKey = apiKey;
+      await app.saveSettings();
+      _syncedBaseUrl = baseUrl;
+      _syncedApiKey = apiKey;
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+    if (!mounted) {
+      return true;
+    }
+    if (showSnackBar) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('服务配置已保存')));
+    }
+    return true;
   }
 
   Future<void> _confirmClear(_ClearTarget target) async {
@@ -233,6 +336,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _serviceResetDisabled(AppState app) {
     return _resettingService || _clearing != null || app.isBusy;
+  }
+
+  bool _serviceActionDisabled(AppState app) {
+    return _saving ||
+        _testing ||
+        _resettingService ||
+        _clearing != null ||
+        app.isBusy;
+  }
+
+  void _syncServiceFields(AppState app) {
+    final baseUrl = app.config.baseUrl;
+    if (_syncedBaseUrl != baseUrl) {
+      _baseUrlController.text = baseUrl;
+      _syncedBaseUrl = baseUrl;
+    }
+
+    final apiKey = app.apiKey;
+    if (_syncedApiKey != apiKey) {
+      _apiKeyController.text = apiKey;
+      _syncedApiKey = apiKey;
+    }
   }
 
   String _dialogTitle(_ClearTarget target) {

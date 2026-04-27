@@ -7,6 +7,79 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('testConnection checks health then auth', () async {
+    final paths = <String>[];
+    String? authHeader;
+    final api = ProxyApiClient(
+      baseUrl: 'http://proxy.test/',
+      apiKey: 'proxy-key',
+      client: MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/healthz') {
+          return http.Response('ok', 200);
+        }
+        if (request.url.path == '/v1/auth/test') {
+          authHeader = request.headers['Authorization'];
+          return http.Response('ok', 200);
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+
+    await expectLater(api.testConnection(), completion(true));
+
+    expect(paths, ['/healthz', '/v1/auth/test']);
+    expect(authHeader, 'Bearer proxy-key');
+  });
+
+  test('testConnection reports unreachable backend before auth', () async {
+    final paths = <String>[];
+    final api = ProxyApiClient(
+      baseUrl: 'http://proxy.test',
+      apiKey: 'proxy-key',
+      client: MockClient((request) async {
+        paths.add(request.url.path);
+        return http.Response('down', 503);
+      }),
+    );
+
+    await expectLater(
+      api.testConnection(),
+      throwsA(
+        isA<ProxyConnectionException>().having(
+          (error) => error.toString(),
+          'message',
+          contains('后端不可达'),
+        ),
+      ),
+    );
+    expect(paths, ['/healthz']);
+  });
+
+  test('testConnection reports invalid proxy key', () async {
+    final api = ProxyApiClient(
+      baseUrl: 'http://proxy.test',
+      apiKey: 'wrong-key',
+      client: MockClient((request) async {
+        if (request.url.path == '/healthz') {
+          return http.Response('ok', 200);
+        }
+        return http.Response('unauthorized', 401);
+      }),
+    );
+
+    await expectLater(
+      api.testConnection(),
+      throwsA(
+        isA<ProxyConnectionException>().having(
+          (error) => error.toString(),
+          'message',
+          contains('代理密钥无效'),
+        ),
+      ),
+    );
+  });
+
   test('streamChat sends attachments as multimodal content', () async {
     late Map<String, dynamic> requestBody;
     final api = ProxyApiClient(

@@ -65,6 +65,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 		return
 	}
+	if r.URL.Path == "/v1/auth/test" {
+		h.authTest(w, r)
+		return
+	}
 	if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
 		h.admin.ServeHTTP(w, r)
 		return
@@ -75,6 +79,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) authTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := h.authenticate(r); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {

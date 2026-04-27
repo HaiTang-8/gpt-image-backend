@@ -326,6 +326,44 @@ func TestInvalidAuthenticatedJSONIsLogged(t *testing.T) {
 	}
 }
 
+func TestAuthTestRequiresValidAPIKey(t *testing.T) {
+	cfg := testConfig(t, "http://example.com/v1")
+	db := testStore(t, cfg)
+	handler := New(cfg, db, http.DefaultTransport)
+
+	tests := []struct {
+		name       string
+		headerName string
+		header     string
+		want       int
+		body       string
+	}{
+		{name: "missing", want: http.StatusUnauthorized, body: "unauthorized\n"},
+		{name: "invalid", headerName: "Authorization", header: "Bearer wrong-key", want: http.StatusUnauthorized, body: "unauthorized\n"},
+		{name: "bearer", headerName: "Authorization", header: "Bearer proxy-key", want: http.StatusOK, body: "ok"},
+		{name: "api key", headerName: "X-API-Key", header: "proxy-key", want: http.StatusOK, body: "ok"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/auth/test", nil)
+			if tt.headerName != "" {
+				req.Header.Set(tt.headerName, tt.header)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != tt.body {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tt.body)
+			}
+		})
+	}
+}
+
 func TestAdminIndexServed(t *testing.T) {
 	cfg := testConfig(t, "http://example.com/v1")
 	db := testStore(t, cfg)
