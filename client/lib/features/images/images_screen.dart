@@ -352,7 +352,7 @@ class _PromptBubble extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final width = MediaQuery.sizeOf(context).width;
     final maxWidth = width > 900 ? 700.0 : width * 0.78;
-    final sourceBytes = _decodeB64(sourceB64Json);
+    final sourceData = sourceB64Json?.trim();
 
     return Align(
       alignment: Alignment.centerRight,
@@ -373,14 +373,17 @@ class _PromptBubble extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            if (sourceBytes != null) ...[
+            if (sourceData != null && sourceData.isNotEmpty) ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.memory(
-                  sourceBytes,
+                child: _Base64Image(
+                  data: sourceData,
+                  cacheKey:
+                      'source:${sourceData.length}:${sourceData.hashCode}',
                   width: 96,
                   height: 96,
                   fit: BoxFit.cover,
+                  invalidMessage: '',
                 ),
               ),
               const SizedBox(height: 8),
@@ -390,18 +393,6 @@ class _PromptBubble extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-Uint8List? _decodeB64(String? value) {
-  final data = value?.trim();
-  if (data == null || data.isEmpty) {
-    return null;
-  }
-  try {
-    return base64Decode(data);
-  } catch (_) {
-    return null;
   }
 }
 
@@ -965,23 +956,26 @@ class _ImagePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final b64 = image.b64Json;
+    final b64 = image.b64Json?.trim();
     if (b64 != null && b64.isNotEmpty) {
-      late final Uint8List bytes;
-      try {
-        bytes = base64Decode(b64);
-      } catch (_) {
-        return SizedBox(
-          width: width,
-          height: height,
-          child: const Center(child: Text('图片数据无法解析')),
-        );
-      }
-      return Image.memory(bytes, width: width, height: height, fit: fit);
+      return _Base64Image(
+        data: b64,
+        cacheKey: image.id,
+        width: width,
+        height: height,
+        fit: fit,
+        invalidMessage: '图片数据无法解析',
+      );
     }
     final url = image.url;
     if (url != null && url.isNotEmpty) {
-      return Image.network(url, width: width, height: height, fit: fit);
+      return Image.network(
+        url,
+        width: width,
+        height: height,
+        fit: fit,
+        gaplessPlayback: true,
+      );
     }
     return SizedBox(
       width: width,
@@ -989,6 +983,107 @@ class _ImagePreview extends StatelessWidget {
       child: const Center(child: Text('接口未返回可显示图片')),
     );
   }
+}
+
+class _Base64Image extends StatefulWidget {
+  const _Base64Image({
+    required this.data,
+    required this.cacheKey,
+    required this.invalidMessage,
+    required this.fit,
+    this.width,
+    this.height,
+  });
+
+  final String data;
+  final String cacheKey;
+  final String invalidMessage;
+  final BoxFit fit;
+  final double? width;
+  final double? height;
+
+  @override
+  State<_Base64Image> createState() => _Base64ImageState();
+}
+
+class _Base64ImageState extends State<_Base64Image> {
+  Uint8List? _bytes;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBytes();
+  }
+
+  @override
+  void didUpdateWidget(_Base64Image oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cacheKey != widget.cacheKey ||
+        oldWidget.data != widget.data) {
+      _loadBytes();
+    }
+  }
+
+  void _loadBytes() {
+    try {
+      _bytes = _decodedImageBytesCache.get(widget.cacheKey, widget.data);
+      _failed = false;
+    } catch (_) {
+      _bytes = null;
+      _failed = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        width: widget.width,
+        height: widget.height,
+        fit: widget.fit,
+        gaplessPlayback: true,
+      );
+    }
+    return SizedBox(
+      width: widget.width,
+      height: widget.height,
+      child: _failed && widget.invalidMessage.isNotEmpty
+          ? Center(child: Text(widget.invalidMessage))
+          : null,
+    );
+  }
+}
+
+final _decodedImageBytesCache = _DecodedImageBytesCache();
+
+class _DecodedImageBytesCache {
+  static const int _maxEntries = 24;
+
+  final _entries = <String, _DecodedImageBytes>{};
+
+  Uint8List get(String key, String data) {
+    final cached = _entries.remove(key);
+    if (cached != null && cached.data == data) {
+      _entries[key] = cached;
+      return cached.bytes;
+    }
+    final bytes = base64Decode(data);
+    _entries[key] = _DecodedImageBytes(data, bytes);
+    if (_entries.length > _maxEntries) {
+      _entries.remove(_entries.keys.first);
+    }
+    return bytes;
+  }
+}
+
+class _DecodedImageBytes {
+  const _DecodedImageBytes(this.data, this.bytes);
+
+  final String data;
+  final Uint8List bytes;
 }
 
 void _openImageViewer(BuildContext context, GeneratedImage image) {
