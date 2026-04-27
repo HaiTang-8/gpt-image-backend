@@ -337,7 +337,7 @@ class AppState extends ChangeNotifier {
     final id = _uuid.v4();
     final history = imageContextHistory(images, imageSession.id);
     final baseImage = latestEditableImage(images, imageSession.id);
-    final requestPrompt = baseImage?.responseId == null
+    final requestPrompt = baseImage == null
         ? buildImageContextPrompt(value, history)
         : value;
     final pending = GeneratedImage(

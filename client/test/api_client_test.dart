@@ -100,6 +100,7 @@ void main() {
         'type': 'image_generation',
         'model': AppConfig.defaultImageModel,
         'size': '1024x1024',
+        'action': 'generate',
       },
     ]);
     expect(requestBody['tool_choice'], {'type': 'image_generation'});
@@ -110,7 +111,7 @@ void main() {
   });
 
   test(
-    'editGeneratedImage uses previous response context when available',
+    'editGeneratedImage sends previous image as Responses edit input',
     () async {
       late Map<String, dynamic> requestBody;
       final api = ProxyApiClient(
@@ -142,8 +143,23 @@ void main() {
         ),
       );
 
-      expect(requestBody['previous_response_id'], 'resp_base');
-      expect(requestBody['input'], 'adjust it');
+      final input = requestBody['input'] as List<dynamic>;
+      final content =
+          (input.single as Map<String, dynamic>)['content'] as List<dynamic>;
+
+      expect(requestBody.containsKey('previous_response_id'), isFalse);
+      expect(requestBody['tools'], [
+        {
+          'type': 'image_generation',
+          'model': AppConfig.defaultImageModel,
+          'action': 'edit',
+        },
+      ]);
+      expect(content[0], {'type': 'input_text', 'text': 'adjust it'});
+      expect(content[1], {
+        'type': 'input_image',
+        'image_url': 'data:image/png;base64,aW1hZ2U=',
+      });
       expect(result.b64Json, 'bmV4dA==');
       expect(result.responseId, 'resp_2');
     },
@@ -197,6 +213,13 @@ void main() {
       expect(calls, [
         'GET http://cdn.test/base.jpg?token=1',
         'POST http://proxy.test/v1/responses',
+      ]);
+      expect(requestBody['tools'], [
+        {
+          'type': 'image_generation',
+          'model': AppConfig.defaultImageModel,
+          'action': 'edit',
+        },
       ]);
       expect(content[0], {'type': 'input_text', 'text': 'adjust it'});
       expect(content[1], {

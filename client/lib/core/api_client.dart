@@ -96,6 +96,7 @@ class ProxyApiClient {
       sessionId: sessionId,
       prompt: prompt,
       size: size,
+      action: 'generate',
     );
   }
 
@@ -111,6 +112,7 @@ class ProxyApiClient {
       sessionId: sessionId,
       prompt: prompt,
       size: size,
+      action: 'edit',
       inputImage: await _xFileImageInput(image),
       sourceFileName: image.name,
     );
@@ -123,16 +125,13 @@ class ProxyApiClient {
     required String? size,
     required GeneratedImage image,
   }) async {
-    final previousResponseId = _nonEmpty(image.responseId);
     return _createImageResponse(
       id: id,
       sessionId: sessionId,
       prompt: prompt,
       size: size,
-      previousResponseId: previousResponseId,
-      inputImage: previousResponseId == null
-          ? await _generatedImageInput(image)
-          : null,
+      action: 'edit',
+      inputImage: await _generatedImageInput(image),
       sourceFileName: _generatedImageFileName(image),
     );
   }
@@ -142,13 +141,14 @@ class ProxyApiClient {
     required String sessionId,
     required String prompt,
     required String? size,
-    String? previousResponseId,
+    required String action,
     _ImageInput? inputImage,
     String? sourceFileName,
   }) async {
     final tool = <String, dynamic>{
       'type': 'image_generation',
       'model': AppConfig.defaultImageModel,
+      'action': action,
     };
     if (size != null) {
       tool['size'] = size;
@@ -159,9 +159,6 @@ class ProxyApiClient {
       'tools': [tool],
       'tool_choice': {'type': 'image_generation'},
     };
-    if (previousResponseId != null) {
-      body['previous_response_id'] = previousResponseId;
-    }
 
     final response = await _client.post(
       _uri('/v1/responses'),
@@ -288,11 +285,6 @@ class ProxyApiClient {
       return 'image/png';
     }
     return null;
-  }
-
-  String? _nonEmpty(String? value) {
-    final trimmed = value?.trim();
-    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
   _ImageGenerationData _decodeImageGenerationResponse(http.Response response) {
