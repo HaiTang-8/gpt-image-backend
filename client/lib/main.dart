@@ -7,6 +7,7 @@ import 'core/storage.dart';
 import 'features/chat/chat_screen.dart';
 import 'features/images/images_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'features/update/update_prompt.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +53,16 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        UpdatePrompt.check(context, silent: true);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

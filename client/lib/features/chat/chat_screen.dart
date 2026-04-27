@@ -468,31 +468,45 @@ class _MessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (message.failed && onRetry != null) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '请求失败',
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: colors.onErrorContainer,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: colors.onErrorContainer,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            minimumSize: const Size(0, 36),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: isSending
+                              ? null
+                              : () {
+                                  onRetry?.call();
+                                },
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('重试'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   GptMarkdown(
                     message.content.isEmpty ? '正在思考...' : message.content,
                     style: TextStyle(color: foreground, height: 1.42),
                   ),
-                  if (message.failed && onRetry != null) ...[
-                    const SizedBox(height: 10),
-                    TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: colors.onErrorContainer,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        minimumSize: const Size(0, 36),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onPressed: isSending
-                          ? null
-                          : () {
-                              onRetry?.call();
-                            },
-                      icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: const Text('重试'),
-                    ),
-                  ],
                 ],
               ),
             ),

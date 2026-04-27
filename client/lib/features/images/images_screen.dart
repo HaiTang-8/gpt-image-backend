@@ -65,7 +65,14 @@ class _ImagesScreenState extends State<ImagesScreen> {
                         ),
                         itemCount: images.length,
                         itemBuilder: (context, index) {
-                          return _ImageTurn(image: images[index]);
+                          final image = images[index];
+                          return _ImageTurn(
+                            image: image,
+                            isWorking: app.isWorkingOnImage,
+                            onRetry: image.status == GeneratedImageStatus.failed
+                                ? () => _retry(app, image)
+                                : null,
+                          );
                         },
                       );
                     },
@@ -128,6 +135,10 @@ class _ImagesScreenState extends State<ImagesScreen> {
       return;
     }
     _jumpToLatestAfterLayout();
+  }
+
+  Future<void> _retry(AppState app, GeneratedImage image) async {
+    await app.retryImage(image.id, aspectRatio: _aspectRatio);
   }
 
   void _jumpToLatestAfterLayout() {
@@ -320,9 +331,15 @@ class _EmptyImageChat extends StatelessWidget {
 }
 
 class _ImageTurn extends StatelessWidget {
-  const _ImageTurn({required this.image});
+  const _ImageTurn({
+    required this.image,
+    required this.isWorking,
+    this.onRetry,
+  });
 
   final GeneratedImage image;
+  final bool isWorking;
+  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -334,6 +351,8 @@ class _ImageTurn extends StatelessWidget {
           GeneratedImageStatus.completed => _ImageReply(image: image),
           GeneratedImageStatus.failed => _FailedImageReply(
             message: image.errorMessage ?? '图片生成失败',
+            isWorking: isWorking,
+            onRetry: onRetry,
           ),
         },
       ],
@@ -474,9 +493,15 @@ class _GeneratingReply extends StatelessWidget {
 }
 
 class _FailedImageReply extends StatelessWidget {
-  const _FailedImageReply({required this.message});
+  const _FailedImageReply({
+    required this.message,
+    required this.isWorking,
+    this.onRetry,
+  });
 
   final String message;
+  final bool isWorking;
+  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -499,9 +524,53 @@ class _FailedImageReply extends StatelessWidget {
                 color: colors.errorContainer,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Text(
-                message,
-                style: TextStyle(color: colors.onErrorContainer, height: 1.42),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (onRetry != null) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '请求失败',
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: colors.onErrorContainer,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: colors.onErrorContainer,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            minimumSize: const Size(0, 36),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: isWorking
+                              ? null
+                              : () {
+                                  onRetry?.call();
+                                },
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('重试'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Text(
+                    message,
+                    style: TextStyle(
+                      color: colors.onErrorContainer,
+                      height: 1.42,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

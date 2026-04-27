@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
+import '../update/update_prompt.dart';
 
 enum _ClearTarget { chat, image, all }
 
@@ -19,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _testing = false;
   bool _saving = false;
   bool _resettingService = false;
+  bool _checkingUpdate = false;
   bool _showApiKey = false;
   String? _syncedBaseUrl;
   String? _syncedApiKey;
@@ -127,6 +129,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text(app.lastError!, style: TextStyle(color: colors.error)),
         ],
         const SizedBox(height: 24),
+        Text('应用', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.system_update_alt_rounded, color: colors.primary),
+          title: const Text('检查更新'),
+          subtitle: const Text('从 GitHub Release 获取最新 Android APK'),
+          trailing: TextButton.icon(
+            onPressed: _checkingUpdate ? null : _checkUpdate,
+            icon: _checkingUpdate
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+            label: Text(_checkingUpdate ? '检查中' : '检查'),
+          ),
+        ),
+        const SizedBox(height: 24),
         Text('数据', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         _clearTile(
@@ -196,6 +217,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     await _saveServiceSettings();
+  }
+
+  Future<void> _checkUpdate() async {
+    setState(() => _checkingUpdate = true);
+    try {
+      await UpdatePrompt.check(context);
+    } finally {
+      if (mounted) {
+        setState(() => _checkingUpdate = false);
+      }
+    }
   }
 
   Widget _clearTile({

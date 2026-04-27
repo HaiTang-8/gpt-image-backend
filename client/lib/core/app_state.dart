@@ -544,6 +544,116 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> retryImage(
+    String imageId, {
+    required ImageAspectRatio aspectRatio,
+  }) async {
+    if (isWorkingOnImage) {
+      return;
+    }
+    if (!isConfigured) {
+      lastError = '请先完成服务配置';
+      notifyListeners();
+      return;
+    }
+    final failed = _imageById(imageId);
+    if (failed == null || failed.status != GeneratedImageStatus.failed) {
+      return;
+    }
+    final value = failed.prompt.trim();
+    if (value.isEmpty) {
+      return;
+    }
+    var session = _imageSessionById(failed.sessionId);
+    if (session == null) {
+      return;
+    }
+
+    final now = DateTime.now();
+    session = session.copyWith(updatedAt: now);
+    _replaceImageSession(session);
+    await _storage.saveImageSession(session);
+
+    final pending = GeneratedImage(
+      id: failed.id,
+      sessionId: failed.sessionId,
+      prompt: value,
+      model: AppConfig.defaultImageModel,
+      createdAt: failed.createdAt,
+      status: GeneratedImageStatus.pending,
+      sourceFileName: failed.sourceFileName,
+      sourceB64Json: failed.sourceB64Json,
+      sourceMimeType: failed.sourceMimeType,
+    );
+    _replaceImage(pending);
+    isWorkingOnImage = true;
+    notifyListeners();
+    await _storage.saveImage(pending);
+
+    try {
+      final api = _api();
+      final history = _imageContextHistoryBefore(failed);
+      final sourceData = failed.sourceB64Json?.trim();
+      final GeneratedImage result;
+      if (sourceData != null && sourceData.isNotEmpty) {
+        final sourceFileName = failed.sourceFileName ?? 'source.png';
+        final sourceImage = XFile.fromData(
+          Uint8List.fromList(base64Decode(sourceData)),
+          name: sourceFileName,
+          mimeType:
+              failed.sourceMimeType ??
+              _imageMimeTypeForFileName(sourceFileName),
+        );
+        result = await api.editImage(
+          id: pending.id,
+          sessionId: pending.sessionId,
+          prompt: buildImageContextPrompt(value, history),
+          size: aspectRatio.imageSize,
+          image: sourceImage,
+        );
+      } else {
+        final baseImage = _latestEditableImageBefore(failed);
+        result = baseImage == null
+            ? await api.generateImage(
+                id: pending.id,
+                sessionId: pending.sessionId,
+                prompt: buildImageContextPrompt(value, history),
+                size: aspectRatio.imageSize,
+              )
+            : await api.editGeneratedImage(
+                id: pending.id,
+                sessionId: pending.sessionId,
+                prompt: value,
+                size: aspectRatio.imageSize,
+                image: baseImage,
+              );
+      }
+      final completed = result.copyWith(
+        prompt: pending.prompt,
+        createdAt: pending.createdAt,
+        status: GeneratedImageStatus.completed,
+        sourceFileName: pending.sourceFileName,
+        sourceB64Json: pending.sourceB64Json,
+        sourceMimeType: pending.sourceMimeType,
+      );
+      _replaceImage(completed);
+      lastError = null;
+      await _storage.saveImage(completed);
+    } catch (error) {
+      final message = error.toString();
+      lastError = message;
+      final failedRetry = pending.copyWith(
+        status: GeneratedImageStatus.failed,
+        errorMessage: message,
+      );
+      _replaceImage(failedRetry);
+      await _storage.saveImage(failedRetry);
+    } finally {
+      isWorkingOnImage = false;
+      notifyListeners();
+    }
+  }
+
   Future<ImageSession> _prepareImageSession(String prompt, DateTime now) async {
     if (selectedImageSession == null) {
       await newImageSession();
@@ -587,6 +697,46 @@ class AppState extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  ImageSession? _imageSessionById(String id) {
+    for (final session in imageSessions) {
+      if (session.id == id) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  GeneratedImage? _imageById(String id) {
+    for (final image in images) {
+      if (image.id == id) {
+        return image;
+      }
+    }
+    return null;
+  }
+
+  List<GeneratedImage> _imageContextHistoryBefore(GeneratedImage image) {
+    return imageContextHistory(
+      images.where(
+        (candidate) =>
+            candidate.id != image.id &&
+            candidate.createdAt.isBefore(image.createdAt),
+      ),
+      image.sessionId,
+    );
+  }
+
+  GeneratedImage? _latestEditableImageBefore(GeneratedImage image) {
+    return latestEditableImage(
+      images.where(
+        (candidate) =>
+            candidate.id != image.id &&
+            candidate.createdAt.isBefore(image.createdAt),
+      ),
+      image.sessionId,
+    );
   }
 
   String _titleFrom(String value) {
