@@ -26,7 +26,7 @@ COPY --chown=nonroot:nonroot config.example.yaml /app/config.example.yaml
 
 USER nonroot:nonroot
 
-EXPOSE 8080
+EXPOSE 8083
 VOLUME ["/app/data"]
 
 ENTRYPOINT ["/app/gpt-image-backend"]

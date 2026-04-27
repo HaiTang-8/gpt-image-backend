@@ -81,7 +81,7 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) applyDefaults() {
 	if c.Addr == "" {
-		c.Addr = ":8080"
+		c.Addr = ":8083"
 	}
 	if c.DatabasePath == "" {
 		c.DatabasePath = "data/proxy.db"

@@ -1,7 +1,7 @@
 class AppConfig {
   const AppConfig({this.baseUrl = defaultBaseUrl});
 
-  static const defaultBaseUrl = 'http://localhost:8080';
+  static const defaultBaseUrl = 'http://localhost:8083';
   static const defaultApiKey = 'replace-with-proxy-key';
   static const defaultChatModel = 'gpt-5.5';
   static const defaultImageModel = 'gpt-image-2';

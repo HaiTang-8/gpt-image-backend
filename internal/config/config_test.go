@@ -66,6 +66,9 @@ func TestConfigAppliesDefaultModels(t *testing.T) {
 	cfg := &Config{}
 	cfg.applyDefaults()
 
+	if cfg.Addr != ":8083" {
+		t.Fatalf("addr = %q, want :8083", cfg.Addr)
+	}
 	if cfg.DefaultChatModel != "gpt-5.5" {
 		t.Fatalf("default chat model = %q, want gpt-5.5", cfg.DefaultChatModel)
 	}

@@ -12,7 +12,7 @@ go run ./cmd/gpt-image-backend
 Clients call this service with the proxy key:
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
+curl http://localhost:8083/v1/chat/completions \
   -H 'Authorization: Bearer replace-with-proxy-key' \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
@@ -32,7 +32,7 @@ external compatibility.
 
 ## Admin console
 
-Open `http://localhost:8080/admin/` after the service starts. The console uses
+Open `http://localhost:8083/admin/` after the service starts. The console uses
 the same proxy API key for `/admin/api/logs` and `/admin/api/stats`, and shows
 request logs, stored request bodies, file metadata, usage totals, latency, error
 rates, and traffic breakdowns. Response bodies are shown when
