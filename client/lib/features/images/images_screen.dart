@@ -23,6 +23,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
   final ImagePicker _picker = ImagePicker();
   ImageAspectRatio _aspectRatio = ImageAspectRatio.auto;
   XFile? _selectedImage;
+  bool _isAutoScrollScheduled = false;
 
   @override
   void dispose() {
@@ -36,7 +37,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
     final app = context.watch<AppState>();
     final colors = Theme.of(context).colorScheme;
     final session = app.selectedImageSession;
-    final images = app.selectedImages.reversed.toList(growable: false);
+    final images = app.selectedImages;
 
     return ColoredBox(
       color: colors.surface,
@@ -55,6 +56,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
                           : 16.0;
                       return ListView.builder(
                         controller: _scrollController,
+                        reverse: true,
                         padding: EdgeInsets.fromLTRB(
                           sidePadding,
                           18,
@@ -108,7 +110,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
         image: image,
         aspectRatio: _aspectRatio,
       );
-      _scheduleScrollToEnd();
+      _jumpToLatestAfterLayout();
       await task;
       if (!mounted) {
         return;
@@ -119,25 +121,27 @@ class _ImagesScreenState extends State<ImagesScreen> {
     } else {
       _promptController.clear();
       final task = app.generateImage(prompt, aspectRatio: _aspectRatio);
-      _scheduleScrollToEnd();
+      _jumpToLatestAfterLayout();
       await task;
     }
     if (!mounted) {
       return;
     }
-    _scheduleScrollToEnd();
+    _jumpToLatestAfterLayout();
   }
 
-  void _scheduleScrollToEnd() {
+  void _jumpToLatestAfterLayout() {
+    if (_isAutoScrollScheduled) {
+      return;
+    }
+    _isAutoScrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isAutoScrollScheduled = false;
       if (!mounted || !_scrollController.hasClients) {
         return;
       }
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+
+      _scrollController.jumpTo(0);
     });
   }
 }

@@ -23,6 +23,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _imagePicker = ImagePicker();
   final List<ChatAttachment> _attachments = [];
+  bool _isAutoScrollScheduled = false;
 
   @override
   void dispose() {
@@ -36,6 +37,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final app = context.watch<AppState>();
     final session = app.selectedSession;
     final colors = Theme.of(context).colorScheme;
+
+    if (app.isSending && session != null && session.messages.isNotEmpty) {
+      _jumpToLatestAfterLayout();
+    }
 
     return ColoredBox(
       color: colors.surface,
@@ -54,6 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           : 16.0;
                       return ListView.builder(
                         controller: _scrollController,
+                        reverse: true,
                         padding: EdgeInsets.fromLTRB(
                           sidePadding,
                           18,
@@ -62,9 +68,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         itemCount: session.messages.length,
                         itemBuilder: (context, index) {
-                          return _MessageBubble(
-                            message: session.messages[index],
-                          );
+                          final message = session
+                              .messages[session.messages.length - 1 - index];
+                          return _MessageBubble(message: message);
                         },
                       );
                     },
@@ -90,13 +96,22 @@ class _ChatScreenState extends State<ChatScreen> {
     final attachments = List<ChatAttachment>.unmodifiable(_attachments);
     setState(_attachments.clear);
     await app.sendMessage(text, attachments: attachments);
-    if (_scrollController.hasClients) {
-      await _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+    _jumpToLatestAfterLayout();
+  }
+
+  void _jumpToLatestAfterLayout() {
+    if (_isAutoScrollScheduled) {
+      return;
     }
+    _isAutoScrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isAutoScrollScheduled = false;
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+
+      _scrollController.jumpTo(0);
+    });
   }
 
   Future<void> _pickImage() async {
