@@ -21,9 +21,14 @@ curl http://localhost:8080/v1/chat/completions \
 ## Logged endpoints
 
 - `POST /v1/chat/completions`
+- `POST /v1/responses`
 - `POST /v1/images/generations`
 - `POST /v1/images/edits`
 - `GET /healthz`
+
+Image generation in the Flutter client uses the Responses API with the
+`image_generation` tool. The older Images API endpoints are still proxied for
+external compatibility.
 
 ## Admin console
 
@@ -40,6 +45,12 @@ from the default test suite. The test uses a 5 minute request timeout.
 
 ```bash
 go test -tags=integration ./internal/proxy -run TestRealImagesGeneration -count=1
+```
+
+To test a three-image conversation that edits with `previous_response_id`:
+
+```bash
+go test -tags=integration ./internal/proxy -run TestRealImagesConversationEditing -count=1
 ```
 
 By default it reads `config.yaml`. To use another config file:

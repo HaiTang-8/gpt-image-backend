@@ -25,28 +25,38 @@ class AppStorage {
     _imagesBox = await Hive.openBox(_imagesBoxName);
   }
 
-  AppConfig loadConfig() {
+  AppConfig loadConfig({AppConfig fallback = const AppConfig()}) {
     final raw = _settingsBox.get(_configKey);
     if (raw is Map) {
-      return AppConfig.fromJson(Map<String, dynamic>.from(raw));
+      return AppConfig.fromJson(
+        Map<String, dynamic>.from(raw),
+        fallbackBaseUrl: fallback.baseUrl,
+      );
     }
-    return const AppConfig();
+    return fallback;
   }
 
   Future<void> saveConfig(AppConfig config) {
     return _settingsBox.put(_configKey, config.toJson());
   }
 
-  Future<String> loadApiKey() async {
+  Future<String> loadApiKey({String fallback = AppConfig.defaultApiKey}) async {
     final saved = await _secureStorage.read(key: _apiKeyKey);
     if (saved == null || saved.trim().isEmpty) {
-      return AppConfig.defaultApiKey;
+      return fallback;
     }
     return saved;
   }
 
   Future<void> saveApiKey(String value) {
     return _secureStorage.write(key: _apiKeyKey, value: value.trim());
+  }
+
+  Future<void> clearServiceConfig() async {
+    await Future.wait([
+      _settingsBox.delete(_configKey),
+      _secureStorage.delete(key: _apiKeyKey),
+    ]);
   }
 
   List<ChatSession> loadSessions() {

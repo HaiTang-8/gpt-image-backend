@@ -16,8 +16,11 @@ class AppConfig {
 
   Map<String, dynamic> toJson() => {'baseUrl': baseUrl};
 
-  factory AppConfig.fromJson(Map<String, dynamic> json) {
-    return AppConfig(baseUrl: json['baseUrl'] as String? ?? defaultBaseUrl);
+  factory AppConfig.fromJson(
+    Map<String, dynamic> json, {
+    String fallbackBaseUrl = defaultBaseUrl,
+  }) {
+    return AppConfig(baseUrl: json['baseUrl'] as String? ?? fallbackBaseUrl);
   }
 }
 
@@ -65,12 +68,87 @@ enum MessageRole {
   }
 }
 
+enum ChatAttachmentKind {
+  image,
+  file;
+
+  String get wireName => name;
+
+  static ChatAttachmentKind fromWireName(String value) {
+    return ChatAttachmentKind.values.firstWhere(
+      (kind) => kind.wireName == value,
+      orElse: () => ChatAttachmentKind.file,
+    );
+  }
+}
+
+class ChatAttachment {
+  const ChatAttachment({
+    required this.id,
+    required this.kind,
+    required this.name,
+    required this.mimeType,
+    required this.data,
+  });
+
+  final String id;
+  final ChatAttachmentKind kind;
+  final String name;
+  final String mimeType;
+  final String data;
+
+  String get dataUrl => 'data:$dataUrlMimeType;base64,$data';
+
+  String get dataUrlMimeType {
+    final value = mimeType.trim();
+    if (kind != ChatAttachmentKind.image) {
+      return value.isEmpty ? 'application/octet-stream' : value;
+    }
+    if (_isImageMimeType(value)) {
+      return value;
+    }
+    return _imageMimeTypeForName(name) ?? 'image/png';
+  }
+
+  Map<String, dynamic> toChatContentPart() {
+    return switch (kind) {
+      ChatAttachmentKind.image => {
+        'type': 'image_url',
+        'image_url': {'url': dataUrl},
+      },
+      ChatAttachmentKind.file => {
+        'type': 'file',
+        'file': {'filename': name, 'file_data': dataUrl},
+      },
+    };
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'kind': kind.wireName,
+    'name': name,
+    'mimeType': mimeType,
+    'data': data,
+  };
+
+  factory ChatAttachment.fromJson(Map<String, dynamic> json) {
+    return ChatAttachment(
+      id: json['id'] as String? ?? '',
+      kind: ChatAttachmentKind.fromWireName(json['kind'] as String? ?? 'file'),
+      name: json['name'] as String? ?? 'attachment',
+      mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
+      data: json['data'] as String? ?? '',
+    );
+  }
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
     required this.role,
     required this.content,
     required this.createdAt,
+    this.attachments = const [],
     this.failed = false,
   });
 
@@ -78,14 +156,32 @@ class ChatMessage {
   final MessageRole role;
   final String content;
   final DateTime createdAt;
+  final List<ChatAttachment> attachments;
   final bool failed;
 
-  ChatMessage copyWith({String? content, bool? failed}) {
+  bool get hasPayload => content.trim().isNotEmpty || attachments.isNotEmpty;
+
+  Object chatContentPayload() {
+    if (attachments.isEmpty) {
+      return content;
+    }
+    return [
+      if (content.trim().isNotEmpty) {'type': 'text', 'text': content},
+      ...attachments.map((attachment) => attachment.toChatContentPart()),
+    ];
+  }
+
+  ChatMessage copyWith({
+    String? content,
+    List<ChatAttachment>? attachments,
+    bool? failed,
+  }) {
     return ChatMessage(
       id: id,
       role: role,
       content: content ?? this.content,
       createdAt: createdAt,
+      attachments: attachments ?? this.attachments,
       failed: failed ?? this.failed,
     );
   }
@@ -94,11 +190,19 @@ class ChatMessage {
     'id': id,
     'role': role.wireName,
     'content': content,
+    'attachments': attachments
+        .map((attachment) => attachment.toJson())
+        .toList(),
     'createdAt': createdAt.toIso8601String(),
     'failed': failed,
   };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final attachments = (json['attachments'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => ChatAttachment.fromJson(Map<String, dynamic>.from(item)))
+        .where((attachment) => attachment.data.isNotEmpty)
+        .toList();
     return ChatMessage(
       id: json['id'] as String,
       role: MessageRole.fromWireName(json['role'] as String? ?? 'user'),
@@ -106,6 +210,7 @@ class ChatMessage {
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
+      attachments: attachments,
       failed: json['failed'] as bool? ?? false,
     );
   }
@@ -228,6 +333,8 @@ class GeneratedImage {
     this.b64Json,
     this.revisedPrompt,
     this.sourceFileName,
+    this.responseId,
+    this.imageGenerationCallId,
     this.errorMessage,
   });
 
@@ -241,7 +348,14 @@ class GeneratedImage {
   final String? b64Json;
   final String? revisedPrompt;
   final String? sourceFileName;
+  final String? responseId;
+  final String? imageGenerationCallId;
   final String? errorMessage;
+
+  bool get hasImagePayload {
+    return (url?.trim().isNotEmpty ?? false) ||
+        (b64Json?.trim().isNotEmpty ?? false);
+  }
 
   GeneratedImage copyWith({
     String? sessionId,
@@ -253,6 +367,8 @@ class GeneratedImage {
     String? b64Json,
     String? revisedPrompt,
     String? sourceFileName,
+    String? responseId,
+    String? imageGenerationCallId,
     String? errorMessage,
   }) {
     return GeneratedImage(
@@ -266,6 +382,9 @@ class GeneratedImage {
       b64Json: b64Json ?? this.b64Json,
       revisedPrompt: revisedPrompt ?? this.revisedPrompt,
       sourceFileName: sourceFileName ?? this.sourceFileName,
+      responseId: responseId ?? this.responseId,
+      imageGenerationCallId:
+          imageGenerationCallId ?? this.imageGenerationCallId,
       errorMessage: errorMessage ?? this.errorMessage,
     );
   }
@@ -281,6 +400,8 @@ class GeneratedImage {
     'b64Json': b64Json,
     'revisedPrompt': revisedPrompt,
     'sourceFileName': sourceFileName,
+    'responseId': responseId,
+    'imageGenerationCallId': imageGenerationCallId,
     'errorMessage': errorMessage,
   };
 
@@ -300,7 +421,112 @@ class GeneratedImage {
       b64Json: json['b64Json'] as String?,
       revisedPrompt: json['revisedPrompt'] as String?,
       sourceFileName: json['sourceFileName'] as String?,
+      responseId: json['responseId'] as String?,
+      imageGenerationCallId: json['imageGenerationCallId'] as String?,
       errorMessage: json['errorMessage'] as String?,
     );
   }
+}
+
+List<GeneratedImage> imageContextHistory(
+  Iterable<GeneratedImage> images,
+  String sessionId, {
+  int limit = 4,
+}) {
+  final history =
+      images
+          .where(
+            (image) =>
+                image.sessionId == sessionId &&
+                image.status == GeneratedImageStatus.completed,
+          )
+          .toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  if (history.length <= limit) {
+    return history;
+  }
+  return history.sublist(history.length - limit);
+}
+
+GeneratedImage? latestEditableImage(
+  Iterable<GeneratedImage> images,
+  String sessionId,
+) {
+  final candidates =
+      images
+          .where(
+            (image) =>
+                image.sessionId == sessionId &&
+                image.status == GeneratedImageStatus.completed &&
+                image.hasImagePayload,
+          )
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return candidates.isEmpty ? null : candidates.first;
+}
+
+String buildImageContextPrompt(
+  String prompt,
+  Iterable<GeneratedImage> history,
+) {
+  final current = _compactLine(prompt);
+  final entries = history
+      .map(_imageContextEntry)
+      .where((entry) => entry.isNotEmpty)
+      .toList(growable: false);
+  if (entries.isEmpty) {
+    return current;
+  }
+
+  final buffer = StringBuffer()
+    ..writeln(
+      'Continue the same image conversation. If a source image is attached, use it as the visual source.',
+    )
+    ..writeln(
+      'Continue the same image conversation and preserve subject, composition, style, and important details unless the current request changes them.',
+    )
+    ..writeln()
+    ..writeln('Earlier requests in this image conversation:');
+  for (final entry in entries) {
+    buffer.writeln('- $entry');
+  }
+  buffer
+    ..writeln()
+    ..writeln('Current user request:')
+    ..write(current);
+  return buffer.toString();
+}
+
+String _imageContextEntry(GeneratedImage image) {
+  final prompt = _compactLine(image.prompt);
+  final revisedPrompt = _compactLine(image.revisedPrompt ?? '');
+  if (prompt.isEmpty && revisedPrompt.isEmpty) {
+    return '';
+  }
+  if (revisedPrompt.isEmpty || revisedPrompt == prompt) {
+    return prompt;
+  }
+  if (prompt.isEmpty) {
+    return 'Model interpretation: $revisedPrompt';
+  }
+  return '$prompt; model interpretation: $revisedPrompt';
+}
+
+String _compactLine(String value) {
+  return value.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+bool _isImageMimeType(String value) {
+  return value.toLowerCase().startsWith('image/');
+}
+
+String? _imageMimeTypeForName(String name) {
+  final extension = name.split('.').last.toLowerCase();
+  return switch (extension) {
+    'png' => 'image/png',
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'webp' => 'image/webp',
+    'gif' => 'image/gif',
+    _ => null,
+  };
 }

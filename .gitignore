@@ -1,5 +1,6 @@
 # Local config and secrets
 config.yaml
+client/assets/default_config.json
 .env
 .env.*
 !.env.example

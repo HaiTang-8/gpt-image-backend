@@ -1,5 +1,9 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
@@ -13,8 +17,12 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const int _maxAttachmentBytes = 50 * 1024 * 1024;
+
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final ImagePicker _imagePicker = ImagePicker();
+  final List<ChatAttachment> _attachments = [];
 
   @override
   void dispose() {
@@ -64,7 +72,11 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           _ComposerBar(
             controller: _controller,
+            attachments: _attachments,
             isSending: app.isSending,
+            onPickImage: _pickImage,
+            onPickFile: _pickFile,
+            onRemoveAttachment: _removeAttachment,
             onSend: () => _send(app),
           ),
         ],
@@ -75,7 +87,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _send(AppState app) async {
     final text = _controller.text;
     _controller.clear();
-    await app.sendMessage(text);
+    final attachments = List<ChatAttachment>.unmodifiable(_attachments);
+    setState(_attachments.clear);
+    await app.sendMessage(text, attachments: attachments);
     if (_scrollController.hasClients) {
       await _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
@@ -83,6 +97,72 @@ class _ChatScreenState extends State<ChatScreen> {
         curve: Curves.easeOut,
       );
     }
+  }
+
+  Future<void> _pickImage() async {
+    final image = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (image == null) {
+      return;
+    }
+    final bytes = await image.readAsBytes();
+    if (!mounted) {
+      return;
+    }
+    _addAttachment(
+      name: image.name,
+      mimeType: _imageMimeTypeForPickedImage(image),
+      bytes: bytes,
+      kind: ChatAttachmentKind.image,
+    );
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    final file = result?.files.single;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+    final mimeType = _mimeTypeForName(file.name);
+    _addAttachment(
+      name: file.name,
+      mimeType: mimeType,
+      bytes: bytes,
+      kind: _isImageMime(mimeType)
+          ? ChatAttachmentKind.image
+          : ChatAttachmentKind.file,
+    );
+  }
+
+  void _addAttachment({
+    required String name,
+    required String mimeType,
+    required List<int> bytes,
+    required ChatAttachmentKind kind,
+  }) {
+    if (bytes.length > _maxAttachmentBytes) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('附件不能超过 50MB')));
+      return;
+    }
+    setState(() {
+      _attachments.add(
+        ChatAttachment(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          kind: kind,
+          name: name,
+          mimeType: mimeType,
+          data: base64Encode(bytes),
+        ),
+      );
+    });
+  }
+
+  void _removeAttachment(String id) {
+    setState(() {
+      _attachments.removeWhere((attachment) => attachment.id == id);
+    });
   }
 }
 
@@ -284,9 +364,31 @@ class _MessageBubble extends StatelessWidget {
               bottomRight: Radius.circular(6),
             ),
           ),
-          child: Text(
-            message.content,
-            style: TextStyle(color: colors.onPrimary, height: 1.38),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message.content.isNotEmpty)
+                Text(
+                  message.content,
+                  style: TextStyle(color: colors.onPrimary, height: 1.38),
+                ),
+              if (message.attachments.isNotEmpty) ...[
+                if (message.content.isNotEmpty) const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: message.attachments
+                      .map(
+                        (attachment) => _AttachmentPill(
+                          attachment: attachment,
+                          inverse: true,
+                        ),
+                      )
+                      .toList(),
+                ),
+              ],
+            ],
           ),
         ),
       );
@@ -345,12 +447,20 @@ class _MessageBubble extends StatelessWidget {
 class _ComposerBar extends StatelessWidget {
   const _ComposerBar({
     required this.controller,
+    required this.attachments,
     required this.isSending,
+    required this.onPickImage,
+    required this.onPickFile,
+    required this.onRemoveAttachment,
     required this.onSend,
   });
 
   final TextEditingController controller;
+  final List<ChatAttachment> attachments;
   final bool isSending;
+  final VoidCallback onPickImage;
+  final VoidCallback onPickFile;
+  final ValueChanged<String> onRemoveAttachment;
   final VoidCallback onSend;
 
   @override
@@ -375,44 +485,109 @@ class _ComposerBar extends StatelessWidget {
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: colors.outlineVariant),
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      minLines: 1,
-                      maxLines: 6,
-                      textInputAction: TextInputAction.newline,
-                      decoration: InputDecoration(
-                        hintText: '问点什么...',
-                        hintStyle: TextStyle(color: colors.onSurfaceVariant),
-                        isDense: true,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
+                  if (attachments.isNotEmpty) ...[
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: attachments
+                            .map(
+                              (attachment) => Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: _AttachmentPill(
+                                  attachment: attachment,
+                                  onRemove: () =>
+                                      onRemoveAttachment(attachment.id),
+                                ),
+                              ),
+                            )
+                            .toList(),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: controller,
-                    builder: (context, value, child) {
-                      final canSend =
-                          value.text.trim().isNotEmpty && !isSending;
-                      return IconButton.filled(
-                        tooltip: '发送',
-                        onPressed: canSend ? onSend : null,
-                        icon: isSending
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.arrow_upward_rounded),
-                      );
-                    },
+                    const SizedBox(height: 8),
+                  ],
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      PopupMenuButton<_AttachmentAction>(
+                        tooltip: '添加附件',
+                        enabled: !isSending,
+                        icon: const Icon(Icons.attach_file_rounded),
+                        onSelected: (value) {
+                          switch (value) {
+                            case _AttachmentAction.image:
+                              onPickImage();
+                            case _AttachmentAction.file:
+                              onPickFile();
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: _AttachmentAction.image,
+                            child: Row(
+                              children: [
+                                Icon(Icons.image_outlined),
+                                SizedBox(width: 12),
+                                Text('图片'),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: _AttachmentAction.file,
+                            child: Row(
+                              children: [
+                                Icon(Icons.description_outlined),
+                                SizedBox(width: 12),
+                                Text('文件'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: TextField(
+                          controller: controller,
+                          minLines: 1,
+                          maxLines: 6,
+                          textInputAction: TextInputAction.newline,
+                          decoration: InputDecoration(
+                            hintText: '问点什么...',
+                            hintStyle: TextStyle(
+                              color: colors.onSurfaceVariant,
+                            ),
+                            isDense: true,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: controller,
+                        builder: (context, value, child) {
+                          final canSend =
+                              (value.text.trim().isNotEmpty ||
+                                  attachments.isNotEmpty) &&
+                              !isSending;
+                          return IconButton.filled(
+                            tooltip: '发送',
+                            onPressed: canSend ? onSend : null,
+                            icon: isSending
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.arrow_upward_rounded),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -422,4 +597,107 @@ class _ComposerBar extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _AttachmentAction { image, file }
+
+class _AttachmentPill extends StatelessWidget {
+  const _AttachmentPill({
+    required this.attachment,
+    this.onRemove,
+    this.inverse = false,
+  });
+
+  final ChatAttachment attachment;
+  final VoidCallback? onRemove;
+  final bool inverse;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final foreground = inverse ? colors.onPrimary : colors.onSurface;
+    final background = inverse
+        ? colors.onPrimary.withValues(alpha: 0.14)
+        : colors.surfaceContainerHigh;
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 240),
+      padding: EdgeInsets.fromLTRB(8, 5, onRemove == null ? 8 : 4, 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_attachmentIcon(attachment.kind), size: 16, color: foreground),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              attachment.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: foreground,
+                height: 1.15,
+              ),
+            ),
+          ),
+          if (onRemove != null) ...[
+            const SizedBox(width: 2),
+            InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: onRemove,
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(Icons.close_rounded, size: 15, color: foreground),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _attachmentIcon(ChatAttachmentKind kind) {
+    return switch (kind) {
+      ChatAttachmentKind.image => Icons.image_outlined,
+      ChatAttachmentKind.file => Icons.description_outlined,
+    };
+  }
+}
+
+bool _isImageMime(String mimeType) {
+  return mimeType.toLowerCase().startsWith('image/');
+}
+
+String _imageMimeTypeForPickedImage(XFile image) {
+  final mimeType = image.mimeType?.trim();
+  if (mimeType != null && _isImageMime(mimeType)) {
+    return mimeType;
+  }
+  final inferred = _mimeTypeForName(image.name);
+  return _isImageMime(inferred) ? inferred : 'image/png';
+}
+
+String _mimeTypeForName(String name) {
+  final extension = name.split('.').last.toLowerCase();
+  return switch (extension) {
+    'png' => 'image/png',
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'webp' => 'image/webp',
+    'gif' => 'image/gif',
+    'pdf' => 'application/pdf',
+    'txt' => 'text/plain',
+    'md' => 'text/markdown',
+    'csv' => 'text/csv',
+    'json' => 'application/json',
+    'doc' => 'application/msword',
+    'docx' =>
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls' => 'application/vnd.ms-excel',
+    'xlsx' =>
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    _ => 'application/octet-stream',
+  };
 }

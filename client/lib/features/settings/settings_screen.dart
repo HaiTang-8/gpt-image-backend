@@ -14,6 +14,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _testing = false;
+  bool _resettingService = false;
   _ClearTarget? _clearing;
 
   @override
@@ -34,9 +35,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: _testing ? null : _test,
+          onPressed: _testing || _resettingService ? null : _test,
           icon: const Icon(Icons.network_check),
           label: Text(_testing ? '测试中' : '测试连接'),
+        ),
+        const SizedBox(height: 8),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            Icons.settings_backup_restore_rounded,
+            color: colors.primary,
+          ),
+          title: const Text('重置服务配置'),
+          subtitle: const Text('恢复默认后端地址和密钥'),
+          trailing: TextButton.icon(
+            onPressed: _serviceResetDisabled(app) ? null : _confirmResetService,
+            icon: _resettingService
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.restore_rounded),
+            label: Text(_resettingService ? '重置中' : '重置'),
+          ),
         ),
         if (app.lastError != null) ...[
           const SizedBox(height: 12),
@@ -73,6 +94,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _confirmResetService() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('重置服务配置？'),
+          content: const Text('后端地址和密钥会恢复为默认值。聊天和图片记录不会被删除。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.restore_rounded),
+              label: const Text('重置'),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok != true || !mounted) {
+      return;
+    }
+    setState(() => _resettingService = true);
+    final reset = await context.read<AppState>().resetServiceConfig();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _resettingService = false);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(reset ? '服务配置已重置' : '当前任务运行中，无法重置')));
   }
 
   Widget _clearTile({
@@ -173,6 +229,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _ClearTarget.image => app.isWorkingOnImage,
       _ClearTarget.all => app.isBusy,
     };
+  }
+
+  bool _serviceResetDisabled(AppState app) {
+    return _resettingService || _clearing != null || app.isBusy;
   }
 
   String _dialogTitle(_ClearTarget target) {

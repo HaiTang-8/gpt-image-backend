@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/app_state.dart';
+import 'core/default_config.dart';
 import 'core/storage.dart';
 import 'features/chat/chat_screen.dart';
 import 'features/images/images_screen.dart';
@@ -11,7 +12,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final storage = AppStorage();
   await storage.init();
-  final appState = AppState(storage);
+  final defaultConfig = await DefaultClientConfig.load();
+  final appState = AppState(storage, defaultConfig);
   await appState.load();
   runApp(
     ChangeNotifierProvider.value(value: appState, child: const ClientApp()),

@@ -103,6 +103,65 @@ func TestChatCompletionsAddsDefaultModel(t *testing.T) {
 	}
 }
 
+func TestResponsesAddsDefaultModelAndLogsInput(t *testing.T) {
+	wantModel := "gpt-5.5"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if got := payload["model"]; got != wantModel {
+			t.Fatalf("model = %q, want %q", got, wantModel)
+		}
+		tools, ok := payload["tools"].([]any)
+		if !ok || len(tools) != 1 {
+			t.Fatalf("tools = %#v", payload["tools"])
+		}
+		tool, ok := tools[0].(map[string]any)
+		if !ok {
+			t.Fatalf("tool = %#v", tools[0])
+		}
+		if got := tool["model"]; got != "gpt-image-2" {
+			t.Fatalf("tool model = %q, want gpt-image-2", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp","output":[],"usage":{"total_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	cfg := testConfig(t, upstream.URL+"/v1")
+	db := testStore(t, cfg)
+	handler := New(cfg, db, http.DefaultTransport)
+
+	body := `{"input":"paint","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}],"tool_choice":{"type":"image_generation"}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer proxy-key")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	row := queryLog(t, cfg.DatabasePath)
+	if row.Model != wantModel {
+		t.Fatalf("logged model = %q, want %q", row.Model, wantModel)
+	}
+	if row.UpstreamID != "openai" {
+		t.Fatalf("upstream = %q", row.UpstreamID)
+	}
+	if row.RequestSummary != "paint" {
+		t.Fatalf("summary = %q", row.RequestSummary)
+	}
+	if !strings.Contains(row.UsageJSON, `"total_tokens":1`) {
+		t.Fatalf("usage_json = %q", row.UsageJSON)
+	}
+}
+
 func TestChatCompletionsStoresResponseBodyWhenEnabled(t *testing.T) {
 	responseBody := `{"id":"resp","choices":[{"message":{"content":"hello"}}]}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

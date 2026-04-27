@@ -3,13 +3,15 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
+import 'default_config.dart';
 import 'models.dart';
 import 'storage.dart';
 
 class AppState extends ChangeNotifier {
-  AppState(this._storage);
+  AppState(this._storage, this._defaultConfig);
 
   final AppStorage _storage;
+  final DefaultClientConfig _defaultConfig;
   final Uuid _uuid = const Uuid();
 
   AppConfig config = const AppConfig();
@@ -52,9 +54,14 @@ class AppState extends ChangeNotifier {
     return images.where((image) => image.sessionId == session.id).toList();
   }
 
+  bool get canContinueSelectedImageSession {
+    final session = selectedImageSession;
+    return session != null && latestEditableImage(images, session.id) != null;
+  }
+
   Future<void> load() async {
-    config = const AppConfig();
-    apiKey = AppConfig.defaultApiKey;
+    config = _storage.loadConfig(fallback: _defaultConfig.appConfig);
+    apiKey = await _storage.loadApiKey(fallback: _defaultConfig.apiKey);
     sessions = _storage.loadSessions();
     imageSessions = _storage.loadImageSessions();
     final staleImages = <GeneratedImage>[];
@@ -84,12 +91,22 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> saveSettings() async {
-    config = const AppConfig();
-    apiKey = AppConfig.defaultApiKey;
     await _storage.saveConfig(config);
     await _storage.saveApiKey(apiKey);
     lastError = null;
     notifyListeners();
+  }
+
+  Future<bool> resetServiceConfig() async {
+    if (isBusy) {
+      return false;
+    }
+    await _storage.clearServiceConfig();
+    config = _defaultConfig.appConfig;
+    apiKey = _defaultConfig.apiKey;
+    lastError = null;
+    notifyListeners();
+    return true;
   }
 
   Future<bool> testConnection() async {
@@ -213,9 +230,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendMessage(String text) async {
+  Future<void> sendMessage(
+    String text, {
+    List<ChatAttachment> attachments = const [],
+  }) async {
     final prompt = text.trim();
-    if (prompt.isEmpty || isSending) {
+    if ((prompt.isEmpty && attachments.isEmpty) || isSending) {
       return;
     }
     if (!isConfigured) {
@@ -235,6 +255,7 @@ class AppState extends ChangeNotifier {
       role: MessageRole.user,
       content: prompt,
       createdAt: now,
+      attachments: attachments,
     );
     final assistantMessage = ChatMessage(
       id: _uuid.v4(),
@@ -243,8 +264,9 @@ class AppState extends ChangeNotifier {
       createdAt: now,
     );
     var session = selectedSession!;
+    final titleSource = prompt.isEmpty ? attachments.first.name : prompt;
     session = session.copyWith(
-      title: session.messages.isEmpty ? _titleFrom(prompt) : session.title,
+      title: session.messages.isEmpty ? _titleFrom(titleSource) : session.title,
       model: AppConfig.defaultChatModel,
       messages: [...session.messages, userMessage, assistantMessage],
       updatedAt: now,
@@ -313,6 +335,11 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now();
     final imageSession = await _prepareImageSession(value, now);
     final id = _uuid.v4();
+    final history = imageContextHistory(images, imageSession.id);
+    final baseImage = latestEditableImage(images, imageSession.id);
+    final requestPrompt = baseImage?.responseId == null
+        ? buildImageContextPrompt(value, history)
+        : value;
     final pending = GeneratedImage(
       id: id,
       sessionId: imageSession.id,
@@ -320,6 +347,7 @@ class AppState extends ChangeNotifier {
       model: AppConfig.defaultImageModel,
       createdAt: now,
       status: GeneratedImageStatus.pending,
+      sourceFileName: baseImage == null ? null : '上一张图片',
     );
     images = [pending, ...images];
     isWorkingOnImage = true;
@@ -327,15 +355,26 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await _storage.saveImage(pending);
     try {
-      final image = await _api().generateImage(
-        id: id,
-        sessionId: imageSession.id,
-        prompt: value,
-        size: aspectRatio.imageSize,
-      );
+      final api = _api();
+      final image = baseImage == null
+          ? await api.generateImage(
+              id: id,
+              sessionId: imageSession.id,
+              prompt: requestPrompt,
+              size: aspectRatio.imageSize,
+            )
+          : await api.editGeneratedImage(
+              id: id,
+              sessionId: imageSession.id,
+              prompt: requestPrompt,
+              size: aspectRatio.imageSize,
+              image: baseImage,
+            );
       final completed = image.copyWith(
+        prompt: pending.prompt,
         createdAt: pending.createdAt,
         status: GeneratedImageStatus.completed,
+        sourceFileName: pending.sourceFileName,
       );
       _replaceImage(completed);
       await _storage.saveImage(completed);
@@ -371,6 +410,8 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now();
     final imageSession = await _prepareImageSession(value, now);
     final id = _uuid.v4();
+    final history = imageContextHistory(images, imageSession.id);
+    final requestPrompt = buildImageContextPrompt(value, history);
     final pending = GeneratedImage(
       id: id,
       sessionId: imageSession.id,
@@ -389,13 +430,15 @@ class AppState extends ChangeNotifier {
       final result = await _api().editImage(
         id: id,
         sessionId: imageSession.id,
-        prompt: value,
+        prompt: requestPrompt,
         size: aspectRatio.imageSize,
         image: image,
       );
       final completed = result.copyWith(
+        prompt: pending.prompt,
         createdAt: pending.createdAt,
         status: GeneratedImageStatus.completed,
+        sourceFileName: pending.sourceFileName,
       );
       _replaceImage(completed);
       await _storage.saveImage(completed);

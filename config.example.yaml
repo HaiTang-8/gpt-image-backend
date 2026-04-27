@@ -13,7 +13,7 @@ default_upstream: openai
 # 客户端未指定 model 时，聊天接口自动补充的默认模型。
 default_chat_model: gpt-5.5
 
-# 客户端未指定 model 时，图片接口自动补充的默认模型。
+# Responses 图片生成工具使用的默认图片模型。
 default_image_model: gpt-image-2
 
 log:

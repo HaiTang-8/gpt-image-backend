@@ -20,6 +20,71 @@ import (
 func TestRealImagesGeneration(t *testing.T) {
 	const prompt = "生成一张中国90年代团圆饭的聚餐照片"
 
+	env := newRealImageTestEnv(t)
+	result := generateRealImageResponse(t, env, prompt, "")
+	outputPath, size, err := saveGeneratedImage(result.B64JSON, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("saved generated image to %s (%d bytes), response_id=%s image_generation_call_id=%s", outputPath, size, result.ResponseID, result.ImageGenerationCallID)
+
+	row := queryLog(t, env.cfg.DatabasePath)
+	if row.RequestSummary != prompt {
+		t.Fatalf("logged prompt = %q, want %q", row.RequestSummary, prompt)
+	}
+	if row.Model != env.cfg.DefaultChatModel {
+		t.Fatalf("logged model = %q, want %q", row.Model, env.cfg.DefaultChatModel)
+	}
+	if row.StatusCode < http.StatusOK || row.StatusCode >= http.StatusMultipleChoices {
+		t.Fatalf("logged status = %d", row.StatusCode)
+	}
+}
+
+func TestRealImagesConversationEditing(t *testing.T) {
+	env := newRealImageTestEnv(t)
+	turns := []struct {
+		prompt   string
+		filename string
+	}{
+		{"生成一张中国90年代团圆饭的聚餐照片", "conversation-01-original.png"},
+		{"把人物的数量减少", "conversation-02-fewer-people.png"},
+		{"人物只要男性", "conversation-03-men-only.png"},
+	}
+
+	previousB64JSON := ""
+	for _, turn := range turns {
+		result := generateRealImageResponse(t, env, turn.prompt, previousB64JSON)
+		outputPath, size, err := saveGeneratedImageAs(result.B64JSON, "", turn.filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("saved %q to %s (%d bytes), response_id=%s image_generation_call_id=%s", turn.prompt, outputPath, size, result.ResponseID, result.ImageGenerationCallID)
+		previousB64JSON = result.B64JSON
+	}
+
+	row := queryLog(t, env.cfg.DatabasePath)
+	if row.RequestSummary != turns[len(turns)-1].prompt {
+		t.Fatalf("logged prompt = %q, want %q", row.RequestSummary, turns[len(turns)-1].prompt)
+	}
+	if row.StatusCode < http.StatusOK || row.StatusCode >= http.StatusMultipleChoices {
+		t.Fatalf("logged status = %d", row.StatusCode)
+	}
+}
+
+type realImageTestEnv struct {
+	cfg     *config.Config
+	handler http.Handler
+}
+
+type realImageResponse struct {
+	ResponseID            string
+	ImageGenerationCallID string
+	B64JSON               string
+}
+
+func newRealImageTestEnv(t *testing.T) realImageTestEnv {
+	t.Helper()
+
 	configPath := os.Getenv("GPT_IMAGE_CONFIG")
 	if configPath == "" {
 		configPath = filepath.Join("..", "..", "config.yaml")
@@ -33,60 +98,95 @@ func TestRealImagesGeneration(t *testing.T) {
 
 	db := testStore(t, cfg)
 	handler := New(cfg, db, http.DefaultTransport)
+	return realImageTestEnv{cfg: cfg, handler: handler}
+}
 
-	body, err := json.Marshal(map[string]any{
-		"prompt": prompt,
-		"size":   "1024x1024",
-		"n":      1,
-	})
+func generateRealImageResponse(t *testing.T, env realImageTestEnv, prompt, previousB64JSON string) realImageResponse {
+	t.Helper()
+	action := "generate"
+	input := any(prompt)
+	if previousB64JSON != "" {
+		action = "edit"
+		input = []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": prompt,
+					},
+					{
+						"type":      "input_image",
+						"image_url": "data:image/png;base64," + previousB64JSON,
+					},
+				},
+			},
+		}
+	}
+	payload := map[string]any{
+		"input": input,
+		"store": true,
+		"tools": []map[string]any{{
+			"type":   "image_generation",
+			"model":  env.cfg.DefaultImageModel,
+			"size":   "1024x1024",
+			"action": action,
+		}},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKeys[0].Key)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+env.cfg.APIKeys[0].Key)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
-	handler.ServeHTTP(rec, req)
+	env.handler.ServeHTTP(rec, req)
 
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	var payload struct {
-		Data []struct {
-			URL     string `json:"url"`
-			B64JSON string `json:"b64_json"`
-		} `json:"data"`
+	var responsePayload struct {
+		ID     string `json:"id"`
+		Output []struct {
+			ID     string `json:"id"`
+			Type   string `json:"type"`
+			Result string `json:"result"`
+		} `json:"output"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &responsePayload); err != nil {
 		t.Fatalf("decode response: %v, body = %s", err, rec.Body.String())
 	}
-	if len(payload.Data) == 0 {
-		t.Fatalf("response data is empty: %s", rec.Body.String())
+	if responsePayload.ID == "" {
+		t.Fatalf("response has no id: %s", rec.Body.String())
 	}
-	if payload.Data[0].URL == "" && payload.Data[0].B64JSON == "" {
-		t.Fatalf("first image has neither url nor b64_json: %s", rec.Body.String())
+	var b64JSON string
+	var imageGenerationCallID string
+	for _, output := range responsePayload.Output {
+		if output.Type == "image_generation_call" {
+			b64JSON = output.Result
+			imageGenerationCallID = output.ID
+			break
+		}
 	}
-	outputPath, size, err := saveGeneratedImage(payload.Data[0].B64JSON, payload.Data[0].URL)
-	if err != nil {
-		t.Fatal(err)
+	if b64JSON == "" {
+		t.Fatalf("response has no image_generation_call.result: %s", rec.Body.String())
 	}
-	t.Logf("saved generated image to %s (%d bytes)", outputPath, size)
-
-	row := queryLog(t, cfg.DatabasePath)
-	if row.RequestSummary != prompt {
-		t.Fatalf("logged prompt = %q, want %q", row.RequestSummary, prompt)
-	}
-	if row.Model != cfg.DefaultImageModel {
-		t.Fatalf("logged model = %q, want %q", row.Model, cfg.DefaultImageModel)
-	}
-	if row.StatusCode < http.StatusOK || row.StatusCode >= http.StatusMultipleChoices {
-		t.Fatalf("logged status = %d", row.StatusCode)
+	return realImageResponse{
+		ResponseID:            responsePayload.ID,
+		ImageGenerationCallID: imageGenerationCallID,
+		B64JSON:               b64JSON,
 	}
 }
 
 func saveGeneratedImage(b64JSON, imageURL string) (string, int, error) {
+	return saveGeneratedImageAs(b64JSON, imageURL, "real-image-generation.png")
+}
+
+func saveGeneratedImageAs(b64JSON, imageURL, filename string) (string, int, error) {
 	var data []byte
 	var err error
 	if b64JSON != "" {
@@ -98,7 +198,7 @@ func saveGeneratedImage(b64JSON, imageURL string) (string, int, error) {
 		return "", 0, err
 	}
 
-	outputPath := filepath.Join("..", "..", "data", "generated", "real-image-generation.png")
+	outputPath := filepath.Join("..", "..", "data", "generated", filename)
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return "", 0, err
 	}

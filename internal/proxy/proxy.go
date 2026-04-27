@@ -70,7 +70,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case "/v1/chat/completions", "/v1/images/generations", "/v1/images/edits":
+	case "/v1/chat/completions", "/v1/responses", "/v1/images/generations", "/v1/images/edits":
 		h.proxy(w, r)
 	default:
 		http.NotFound(w, r)
@@ -124,6 +124,8 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) withRequestDefaults(r *http.Request, body []byte) []byte {
 	switch r.URL.Path {
 	case "/v1/chat/completions":
+		return jsonWithDefaultModel(body, h.cfg.DefaultChatModel)
+	case "/v1/responses":
 		return jsonWithDefaultModel(body, h.cfg.DefaultChatModel)
 	case "/v1/images/generations":
 		return jsonWithDefaultModel(body, h.cfg.DefaultImageModel)
@@ -465,6 +467,9 @@ func summarizeJSON(payload map[string]any) string {
 	if prompt := stringValue(payload["prompt"]); prompt != "" {
 		return prompt
 	}
+	if input := summarizeInput(payload["input"]); input != "" {
+		return input
+	}
 	messages, ok := payload["messages"].([]any)
 	if !ok {
 		return ""
@@ -493,6 +498,38 @@ func summarizeJSON(payload map[string]any) string {
 	return strings.Join(parts, "\n")
 }
 
+func summarizeInput(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []any:
+		var parts []string
+		for _, item := range typed {
+			input, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch content := input["content"].(type) {
+			case string:
+				parts = append(parts, content)
+			case []any:
+				for _, block := range content {
+					blockMap, ok := block.(map[string]any)
+					if !ok {
+						continue
+					}
+					if text := stringValue(blockMap["text"]); text != "" {
+						parts = append(parts, text)
+					}
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
+}
+
 func collectJSONFileRefs(payload map[string]any) []store.FileMeta {
 	var files []store.FileMeta
 	var walk func(any)
@@ -502,9 +539,14 @@ func collectJSONFileRefs(payload map[string]any) []store.FileMeta {
 			if urlValue := stringValue(typed["url"]); urlValue != "" && looksLikeFileRef(urlValue) {
 				files = append(files, store.FileMeta{FieldName: "url", Filename: urlValue})
 			}
-			if imageURL, ok := typed["image_url"].(map[string]any); ok {
+			switch imageURL := typed["image_url"].(type) {
+			case map[string]any:
 				if urlValue := stringValue(imageURL["url"]); urlValue != "" {
 					files = append(files, store.FileMeta{FieldName: "image_url", Filename: urlValue, SizeBytes: int64(len(urlValue))})
+				}
+			case string:
+				if imageURL != "" {
+					files = append(files, store.FileMeta{FieldName: "image_url", Filename: imageURL, SizeBytes: int64(len(imageURL))})
 				}
 			}
 			if file, ok := typed["file"].(map[string]any); ok {

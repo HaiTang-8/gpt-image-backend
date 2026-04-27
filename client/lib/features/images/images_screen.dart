@@ -22,7 +22,6 @@ class _ImagesScreenState extends State<ImagesScreen> {
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
   ImageAspectRatio _aspectRatio = ImageAspectRatio.auto;
-  bool _editMode = false;
   XFile? _selectedImage;
 
   @override
@@ -72,15 +71,16 @@ class _ImagesScreenState extends State<ImagesScreen> {
           ),
           _ImageComposerBar(
             controller: _promptController,
-            editMode: _editMode,
             aspectRatio: _aspectRatio,
             selectedImage: _selectedImage,
+            continuesPreviousImage:
+                _selectedImage == null && app.canContinueSelectedImageSession,
             isWorking: app.isWorkingOnImage,
-            onModeChanged: (value) => setState(() => _editMode = value),
             onAspectRatioChanged: (value) {
               setState(() => _aspectRatio = value);
             },
             onPickImage: _pickImage,
+            onClearImage: () => setState(() => _selectedImage = null),
             onSubmit: () => _submit(app),
           ),
         ],
@@ -100,14 +100,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
     if (prompt.isEmpty || app.isWorkingOnImage) {
       return;
     }
-    if (_editMode) {
-      final image = _selectedImage;
-      if (image == null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('请先选择图片')));
-        return;
-      }
+    if (_selectedImage != null) {
+      final image = _selectedImage!;
       _promptController.clear();
       final task = app.editImage(
         prompt: prompt,
@@ -116,6 +110,12 @@ class _ImagesScreenState extends State<ImagesScreen> {
       );
       _scheduleScrollToEnd();
       await task;
+      if (!mounted) {
+        return;
+      }
+      if (app.lastError == null) {
+        setState(() => _selectedImage = null);
+      }
     } else {
       _promptController.clear();
       final task = app.generateImage(prompt, aspectRatio: _aspectRatio);
@@ -548,24 +548,24 @@ class _AssistantAvatar extends StatelessWidget {
 class _ImageComposerBar extends StatelessWidget {
   const _ImageComposerBar({
     required this.controller,
-    required this.editMode,
     required this.aspectRatio,
     required this.selectedImage,
+    required this.continuesPreviousImage,
     required this.isWorking,
-    required this.onModeChanged,
     required this.onAspectRatioChanged,
     required this.onPickImage,
+    required this.onClearImage,
     required this.onSubmit,
   });
 
   final TextEditingController controller;
-  final bool editMode;
   final ImageAspectRatio aspectRatio;
   final XFile? selectedImage;
+  final bool continuesPreviousImage;
   final bool isWorking;
-  final ValueChanged<bool> onModeChanged;
   final ValueChanged<ImageAspectRatio> onAspectRatioChanged;
   final VoidCallback onPickImage;
+  final VoidCallback onClearImage;
   final VoidCallback onSubmit;
 
   @override
@@ -599,16 +599,15 @@ class _ImageComposerBar extends StatelessWidget {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _ModeToggle(editMode: editMode, onChanged: onModeChanged),
                       _AspectRatioSelector(
                         selected: aspectRatio,
                         onChanged: onAspectRatioChanged,
                       ),
-                      if (editMode)
-                        _PickImageButton(
-                          fileName: selectedImage?.name,
-                          onPressed: onPickImage,
-                        ),
+                      _PickImageButton(
+                        fileName: selectedImage?.name,
+                        onPressed: onPickImage,
+                        onClear: selectedImage == null ? null : onClearImage,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -622,7 +621,11 @@ class _ImageComposerBar extends StatelessWidget {
                           maxLines: 6,
                           textInputAction: TextInputAction.newline,
                           decoration: InputDecoration(
-                            hintText: editMode ? '描述要怎样修改...' : '描述图片...',
+                            hintText: selectedImage == null
+                                ? continuesPreviousImage
+                                      ? '继续描述要调整哪里...'
+                                      : '描述图片...'
+                                : '描述要怎样修改或参考...',
                             hintStyle: TextStyle(
                               color: colors.onSurfaceVariant,
                             ),
@@ -640,7 +643,11 @@ class _ImageComposerBar extends StatelessWidget {
                           final canSend =
                               value.text.trim().isNotEmpty && !isWorking;
                           return IconButton.filled(
-                            tooltip: editMode ? '提交编辑' : '生成图片',
+                            tooltip: selectedImage == null
+                                ? continuesPreviousImage
+                                      ? '基于上一张继续生成'
+                                      : '生成图片'
+                                : '携图生成',
                             onPressed: canSend ? onSubmit : null,
                             icon: isWorking
                                 ? const SizedBox.square(
@@ -665,58 +672,39 @@ class _ImageComposerBar extends StatelessWidget {
   }
 }
 
-class _ModeToggle extends StatelessWidget {
-  const _ModeToggle({required this.editMode, required this.onChanged});
-
-  final bool editMode;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SegmentedButton<bool>(
-      segments: const [
-        ButtonSegment(
-          value: false,
-          label: Text('生成'),
-          icon: Icon(Icons.auto_awesome_rounded),
-        ),
-        ButtonSegment(
-          value: true,
-          label: Text('编辑'),
-          icon: Icon(Icons.edit_rounded),
-        ),
-      ],
-      selected: {editMode},
-      onSelectionChanged: (value) => onChanged(value.first),
-      style: const ButtonStyle(
-        visualDensity: VisualDensity(horizontal: -2, vertical: -2),
-      ),
-    );
-  }
-}
-
 class _PickImageButton extends StatelessWidget {
-  const _PickImageButton({required this.fileName, required this.onPressed});
+  const _PickImageButton({
+    required this.fileName,
+    required this.onPressed,
+    required this.onClear,
+  });
 
   final String? fileName;
   final VoidCallback onPressed;
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: const Icon(Icons.add_photo_alternate_outlined),
+    final currentName = fileName;
+    if (currentName == null) {
+      return OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.add_photo_alternate_outlined),
+        label: const Text('选择图片'),
+        style: const ButtonStyle(
+          visualDensity: VisualDensity(horizontal: -2, vertical: -2),
+        ),
+      );
+    }
+
+    return InputChip(
+      avatar: const Icon(Icons.image_outlined, size: 18),
       label: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 180),
-        child: Text(
-          fileName ?? '选择图片',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        child: Text(currentName, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
-      style: const ButtonStyle(
-        visualDensity: VisualDensity(horizontal: -2, vertical: -2),
-      ),
+      onPressed: onPressed,
+      onDeleted: onClear,
     );
   }
 }

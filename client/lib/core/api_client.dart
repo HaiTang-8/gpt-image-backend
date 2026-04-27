@@ -40,11 +40,11 @@ class ProxyApiClient {
     request.body = jsonEncode({
       'stream': true,
       'messages': messages
-          .where((message) => message.content.trim().isNotEmpty)
+          .where((message) => message.hasPayload)
           .map(
             (message) => {
               'role': message.role.wireName,
-              'content': message.content,
+              'content': message.chatContentPayload(),
             },
           )
           .toList(),
@@ -91,25 +91,11 @@ class ProxyApiClient {
     required String prompt,
     required String? size,
   }) async {
-    final body = <String, dynamic>{'prompt': prompt, 'n': 1};
-    if (size != null) {
-      body['size'] = size;
-    }
-    final response = await _client.post(
-      _uri('/v1/images/generations'),
-      headers: _jsonHeaders,
-      body: jsonEncode(body),
-    );
-    final data = _decodeImageResponse(response);
-    return GeneratedImage(
+    return _createImageResponse(
       id: id,
       sessionId: sessionId,
       prompt: prompt,
-      model: AppConfig.defaultImageModel,
-      createdAt: DateTime.now(),
-      url: data['url'] as String?,
-      b64Json: data['b64_json'] as String?,
-      revisedPrompt: data['revised_prompt'] as String?,
+      size: size,
     );
   }
 
@@ -120,46 +106,219 @@ class ProxyApiClient {
     required String? size,
     required XFile image,
   }) async {
-    final request = http.MultipartRequest('POST', _uri('/v1/images/edits'));
-    request.headers['Authorization'] = 'Bearer $apiKey';
-    request.fields['prompt'] = prompt;
+    return _createImageResponse(
+      id: id,
+      sessionId: sessionId,
+      prompt: prompt,
+      size: size,
+      inputImage: await _xFileImageInput(image),
+      sourceFileName: image.name,
+    );
+  }
+
+  Future<GeneratedImage> editGeneratedImage({
+    required String id,
+    required String sessionId,
+    required String prompt,
+    required String? size,
+    required GeneratedImage image,
+  }) async {
+    final previousResponseId = _nonEmpty(image.responseId);
+    return _createImageResponse(
+      id: id,
+      sessionId: sessionId,
+      prompt: prompt,
+      size: size,
+      previousResponseId: previousResponseId,
+      inputImage: previousResponseId == null
+          ? await _generatedImageInput(image)
+          : null,
+      sourceFileName: _generatedImageFileName(image),
+    );
+  }
+
+  Future<GeneratedImage> _createImageResponse({
+    required String id,
+    required String sessionId,
+    required String prompt,
+    required String? size,
+    String? previousResponseId,
+    _ImageInput? inputImage,
+    String? sourceFileName,
+  }) async {
+    final tool = <String, dynamic>{
+      'type': 'image_generation',
+      'model': AppConfig.defaultImageModel,
+    };
     if (size != null) {
-      request.fields['size'] = size;
+      tool['size'] = size;
     }
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'image',
-        await image.readAsBytes(),
-        filename: image.name,
-      ),
+    final body = <String, dynamic>{
+      'model': AppConfig.defaultChatModel,
+      'input': inputImage == null ? prompt : _imageInput(prompt, inputImage),
+      'tools': [tool],
+      'tool_choice': {'type': 'image_generation'},
+    };
+    if (previousResponseId != null) {
+      body['previous_response_id'] = previousResponseId;
+    }
+
+    final response = await _client.post(
+      _uri('/v1/responses'),
+      headers: _jsonHeaders,
+      body: jsonEncode(body),
     );
 
-    final streamed = await _client.send(request);
-    final response = await http.Response.fromStream(streamed);
-    final data = _decodeImageResponse(response);
+    final data = _decodeImageGenerationResponse(response);
     return GeneratedImage(
       id: id,
       sessionId: sessionId,
       prompt: prompt,
       model: AppConfig.defaultImageModel,
       createdAt: DateTime.now(),
-      url: data['url'] as String?,
-      b64Json: data['b64_json'] as String?,
-      revisedPrompt: data['revised_prompt'] as String?,
-      sourceFileName: image.name,
+      b64Json: data.result,
+      revisedPrompt: data.revisedPrompt,
+      sourceFileName: sourceFileName,
+      responseId: data.responseId,
+      imageGenerationCallId: data.callId,
     );
   }
 
-  Map<String, dynamic> _decodeImageResponse(http.Response response) {
+  List<Map<String, dynamic>> _imageInput(String prompt, _ImageInput image) {
+    return [
+      {
+        'role': 'user',
+        'content': [
+          {'type': 'input_text', 'text': prompt},
+          {'type': 'input_image', 'image_url': image.dataUrl},
+        ],
+      },
+    ];
+  }
+
+  Future<_ImageInput> _xFileImageInput(XFile image) async {
+    return _ImageInput(
+      dataUrl: _dataUrl(
+        await image.readAsBytes(),
+        image.mimeType ?? _mimeTypeForFileName(image.name),
+      ),
+    );
+  }
+
+  Future<_ImageInput> _generatedImageInput(GeneratedImage image) async {
+    final b64 = image.b64Json;
+    if (b64 != null && b64.trim().isNotEmpty) {
+      return _ImageInput(dataUrl: 'data:image/png;base64,${b64.trim()}');
+    }
+
+    final url = image.url;
+    if (url != null && url.trim().isNotEmpty) {
+      final response = await _client.get(Uri.parse(url));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ProxyApiException(response.statusCode, response.body);
+      }
+      final fileName = _generatedImageFileName(
+        image,
+        contentType: response.headers['content-type'],
+      );
+      return _ImageInput(
+        dataUrl: _dataUrl(
+          response.bodyBytes,
+          _contentType(response.headers['content-type']) ??
+              _mimeTypeForFileName(fileName),
+        ),
+      );
+    }
+
+    throw const FormatException('上一张图片没有可编辑数据');
+  }
+
+  String _generatedImageFileName(GeneratedImage image, {String? contentType}) {
+    final url = image.url;
+    if (url != null && url.trim().isNotEmpty) {
+      final uri = Uri.tryParse(url);
+      final name = uri == null || uri.pathSegments.isEmpty
+          ? ''
+          : uri.pathSegments.last;
+      if (_hasImageExtension(name)) {
+        return name;
+      }
+    }
+    return 'image-${image.id}${_extensionFor(contentType)}';
+  }
+
+  bool _hasImageExtension(String value) {
+    final lower = value.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp');
+  }
+
+  String _extensionFor(String? contentType) {
+    final type = _contentType(contentType);
+    return switch (type) {
+      'image/jpeg' => '.jpg',
+      'image/webp' => '.webp',
+      _ => '.png',
+    };
+  }
+
+  String _dataUrl(List<int> bytes, String? mimeType) {
+    return 'data:${_contentType(mimeType) ?? 'image/png'};base64,${base64Encode(bytes)}';
+  }
+
+  String? _contentType(String? value) {
+    final type = value?.split(';').first.trim().toLowerCase();
+    return type == null || type.isEmpty ? null : type;
+  }
+
+  String? _mimeTypeForFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    return null;
+  }
+
+  String? _nonEmpty(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  _ImageGenerationData _decodeImageGenerationResponse(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ProxyApiException(response.statusCode, response.body);
     }
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
-    final data = payload['data'] as List? ?? const [];
-    if (data.isEmpty || data.first is! Map) {
-      throw const FormatException('图片接口未返回 data[0]');
+    final output = payload['output'] as List? ?? const [];
+    for (final item in output) {
+      if (item is! Map || item['type'] != 'image_generation_call') {
+        continue;
+      }
+      final call = Map<String, dynamic>.from(item);
+      final result = call['result'];
+      if (result is String && result.trim().isNotEmpty) {
+        return _ImageGenerationData(
+          responseId: payload['id'] as String?,
+          callId: call['id'] as String?,
+          result: result,
+          revisedPrompt: call['revised_prompt'] as String?,
+        );
+      }
     }
-    return Map<String, dynamic>.from(data.first as Map);
+    throw const FormatException(
+      'Responses API 未返回 image_generation_call.result',
+    );
   }
 
   String? _contentFrom(Object? value) {
@@ -172,6 +331,26 @@ class ProxyApiClient {
     }
     return null;
   }
+}
+
+class _ImageInput {
+  const _ImageInput({required this.dataUrl});
+
+  final String dataUrl;
+}
+
+class _ImageGenerationData {
+  const _ImageGenerationData({
+    required this.responseId,
+    required this.callId,
+    required this.result,
+    required this.revisedPrompt,
+  });
+
+  final String? responseId;
+  final String? callId;
+  final String result;
+  final String? revisedPrompt;
 }
 
 class ProxyApiException implements Exception {
