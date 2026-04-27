@@ -125,7 +125,22 @@ upstreams:
       - gpt-image*
 EOF
   chmod 600 "$file"
-  info "已生成 $file (权限 600)"
+  info "已生成 $file"
+}
+
+# 容器内服务以 nonroot (UID 65532) 运行,需要让其能读 config.yaml 与读写 data/
+fix_perms() {
+  local cfg="$INSTALL_DIR/config.yaml"
+  local data_dir="$INSTALL_DIR/data"
+  if [[ $EUID -eq 0 ]]; then
+    chown 65532:65532 "$cfg" "$data_dir"
+    chmod 600 "$cfg"
+    chmod 700 "$data_dir"
+  else
+    warn "当前未以 root 运行,改用宽松权限以便容器内 nonroot 用户访问"
+    chmod 644 "$cfg"
+    chmod 777 "$data_dir"
+  fi
 }
 
 cmd_install() {
@@ -164,6 +179,8 @@ cmd_install() {
     info "docker-compose.yml 已存在,覆盖更新"
   fi
   write_compose
+
+  fix_perms
 
   info "拉取镜像 $IMAGE"
   "${COMPOSE[@]}" pull
