@@ -524,7 +524,7 @@ class _ComposerBar extends StatelessWidget {
                     const SizedBox(height: 8),
                   ],
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       PopupMenuButton<_AttachmentAction>(
                         tooltip: '添加附件',

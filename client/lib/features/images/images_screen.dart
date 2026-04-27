@@ -2,13 +2,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import 'image_saver.dart';
 
 class ImagesScreen extends StatefulWidget {
   const ImagesScreen({super.key});
@@ -840,10 +840,10 @@ class _ImagePreviewButton extends StatelessWidget {
                     top: 8,
                     left: 8,
                     child: _ImageOverlayButton(
-                      tooltip: '保存到相册',
+                      tooltip: '保存图片',
                       icon: Icons.download_rounded,
                       onPressed: () {
-                        _saveImageToGallery(context, image);
+                        _saveImage(context, image);
                       },
                     ),
                   ),
@@ -917,9 +917,9 @@ class _ImageViewerDialog extends StatelessWidget {
           title: const Text('图片预览'),
           actions: [
             IconButton(
-              tooltip: '保存到相册',
+              tooltip: '保存图片',
               onPressed: () {
-                _saveImageToGallery(context, image);
+                _saveImage(context, image);
               },
               icon: const Icon(Icons.download_rounded),
             ),
@@ -998,33 +998,16 @@ void _openImageViewer(BuildContext context, GeneratedImage image) {
   );
 }
 
-Future<void> _saveImageToGallery(
-  BuildContext context,
-  GeneratedImage image,
-) async {
+Future<void> _saveImage(BuildContext context, GeneratedImage image) async {
   try {
     final bytes = await _imageBytesFor(image);
-    final hasAccess = await Gal.hasAccess();
-    final canSave = hasAccess || await Gal.requestAccess();
-    if (!canSave) {
-      throw const _ImageSaveException('没有相册写入权限');
-    }
-    await Gal.putImageBytes(bytes, name: _imageName(image));
+    await saveImageBytes(bytes, name: _imageName(image));
     if (!context.mounted) {
       return;
     }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('已保存到相册')));
-  } on GalException catch (error) {
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text('保存失败：${_galErrorMessage(error)}')),
-      );
+      ..showSnackBar(SnackBar(content: Text(imageSaveSuccessMessage)));
   } catch (error) {
     if (!context.mounted) {
       return;
@@ -1059,15 +1042,6 @@ Future<Uint8List> _imageBytesFor(GeneratedImage image) async {
 
 String _imageName(GeneratedImage image) {
   return 'image-${image.id}';
-}
-
-String _galErrorMessage(GalException error) {
-  return switch (error.type) {
-    GalExceptionType.accessDenied => '没有相册写入权限',
-    GalExceptionType.notEnoughSpace => '设备存储空间不足',
-    GalExceptionType.notSupportedFormat => '图片格式不支持',
-    GalExceptionType.unexpected => '相册保存失败',
-  };
 }
 
 class _ImageSaveException implements Exception {

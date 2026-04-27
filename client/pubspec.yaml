@@ -43,6 +43,7 @@ dependencies:
   image_picker: ^1.2.1
   gpt_markdown: ^1.1.6
   uuid: ^4.5.3
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
