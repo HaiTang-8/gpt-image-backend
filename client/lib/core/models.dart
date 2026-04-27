@@ -333,6 +333,8 @@ class GeneratedImage {
     this.b64Json,
     this.revisedPrompt,
     this.sourceFileName,
+    this.sourceB64Json,
+    this.sourceMimeType,
     this.responseId,
     this.imageGenerationCallId,
     this.errorMessage,
@@ -348,6 +350,8 @@ class GeneratedImage {
   final String? b64Json;
   final String? revisedPrompt;
   final String? sourceFileName;
+  final String? sourceB64Json;
+  final String? sourceMimeType;
   final String? responseId;
   final String? imageGenerationCallId;
   final String? errorMessage;
@@ -367,6 +371,8 @@ class GeneratedImage {
     String? b64Json,
     String? revisedPrompt,
     String? sourceFileName,
+    String? sourceB64Json,
+    String? sourceMimeType,
     String? responseId,
     String? imageGenerationCallId,
     String? errorMessage,
@@ -382,6 +388,8 @@ class GeneratedImage {
       b64Json: b64Json ?? this.b64Json,
       revisedPrompt: revisedPrompt ?? this.revisedPrompt,
       sourceFileName: sourceFileName ?? this.sourceFileName,
+      sourceB64Json: sourceB64Json ?? this.sourceB64Json,
+      sourceMimeType: sourceMimeType ?? this.sourceMimeType,
       responseId: responseId ?? this.responseId,
       imageGenerationCallId:
           imageGenerationCallId ?? this.imageGenerationCallId,
@@ -400,6 +408,8 @@ class GeneratedImage {
     'b64Json': b64Json,
     'revisedPrompt': revisedPrompt,
     'sourceFileName': sourceFileName,
+    'sourceB64Json': sourceB64Json,
+    'sourceMimeType': sourceMimeType,
     'responseId': responseId,
     'imageGenerationCallId': imageGenerationCallId,
     'errorMessage': errorMessage,
@@ -421,6 +431,8 @@ class GeneratedImage {
       b64Json: json['b64Json'] as String?,
       revisedPrompt: json['revisedPrompt'] as String?,
       sourceFileName: json['sourceFileName'] as String?,
+      sourceB64Json: json['sourceB64Json'] as String?,
+      sourceMimeType: json['sourceMimeType'] as String?,
       responseId: json['responseId'] as String?,
       imageGenerationCallId: json['imageGenerationCallId'] as String?,
       errorMessage: json['errorMessage'] as String?,

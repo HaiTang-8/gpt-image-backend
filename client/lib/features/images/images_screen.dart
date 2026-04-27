@@ -328,7 +328,7 @@ class _ImageTurn extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _PromptBubble(text: image.prompt),
+        _PromptBubble(text: image.prompt, sourceB64Json: image.sourceB64Json),
         switch (image.status) {
           GeneratedImageStatus.pending => const _GeneratingReply(),
           GeneratedImageStatus.completed => _ImageReply(image: image),
@@ -342,15 +342,17 @@ class _ImageTurn extends StatelessWidget {
 }
 
 class _PromptBubble extends StatelessWidget {
-  const _PromptBubble({required this.text});
+  const _PromptBubble({required this.text, this.sourceB64Json});
 
   final String text;
+  final String? sourceB64Json;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final width = MediaQuery.sizeOf(context).width;
     final maxWidth = width > 900 ? 700.0 : width * 0.78;
+    final sourceBytes = _decodeB64(sourceB64Json);
 
     return Align(
       alignment: Alignment.centerRight,
@@ -367,12 +369,39 @@ class _PromptBubble extends StatelessWidget {
             bottomRight: Radius.circular(6),
           ),
         ),
-        child: Text(
-          text,
-          style: TextStyle(color: colors.onPrimary, height: 1.38),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (sourceBytes != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.memory(
+                  sourceBytes,
+                  width: 96,
+                  height: 96,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Text(text, style: TextStyle(color: colors.onPrimary, height: 1.38)),
+          ],
         ),
       ),
     );
+  }
+}
+
+Uint8List? _decodeB64(String? value) {
+  final data = value?.trim();
+  if (data == null || data.isEmpty) {
+    return null;
+  }
+  try {
+    return base64Decode(data);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -403,45 +432,7 @@ class _ImageReply extends StatelessWidget {
                 border: Border.all(color: colors.outlineVariant),
               ),
               clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AspectRatio(
-                    aspectRatio: 1,
-                    child: _ImagePreviewButton(image: image),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              _MetaPill(label: image.model),
-                              if (image.sourceFileName != null)
-                                _MetaPill(label: image.sourceFileName!),
-                              if (image.url != null)
-                                _MetaPill(label: image.url!, maxWidth: 220),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton.outlined(
-                          tooltip: '保存到相册',
-                          onPressed: () {
-                            _saveImageToGallery(context, image);
-                          },
-                          icon: const Icon(Icons.download_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              child: _ImagePreviewButton(image: image),
             ),
           ),
         ],
@@ -608,7 +599,7 @@ class _ImageComposerBar extends StatelessWidget {
                         onChanged: onAspectRatioChanged,
                       ),
                       _PickImageButton(
-                        fileName: selectedImage?.name,
+                        image: selectedImage,
                         onPressed: onPickImage,
                         onClear: selectedImage == null ? null : onClearImage,
                       ),
@@ -678,19 +669,19 @@ class _ImageComposerBar extends StatelessWidget {
 
 class _PickImageButton extends StatelessWidget {
   const _PickImageButton({
-    required this.fileName,
+    required this.image,
     required this.onPressed,
     required this.onClear,
   });
 
-  final String? fileName;
+  final XFile? image;
   final VoidCallback onPressed;
   final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
-    final currentName = fileName;
-    if (currentName == null) {
+    final currentImage = image;
+    if (currentImage == null) {
       return OutlinedButton.icon(
         onPressed: onPressed,
         icon: const Icon(Icons.add_photo_alternate_outlined),
@@ -701,14 +692,59 @@ class _PickImageButton extends StatelessWidget {
       );
     }
 
-    return InputChip(
-      avatar: const Icon(Icons.image_outlined, size: 18),
-      label: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 180),
-        child: Text(currentName, maxLines: 1, overflow: TextOverflow.ellipsis),
-      ),
-      onPressed: onPressed,
-      onDeleted: onClear,
+    final colors = Theme.of(context).colorScheme;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(10),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: FutureBuilder<Uint8List>(
+                future: currentImage.readAsBytes(),
+                builder: (context, snapshot) {
+                  final bytes = snapshot.data;
+                  if (bytes == null) {
+                    return Container(
+                      width: 72,
+                      height: 72,
+                      color: colors.surfaceContainerHigh,
+                      child: Icon(
+                        Icons.image_outlined,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    );
+                  }
+                  return Image.memory(
+                    bytes,
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.cover,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: -8,
+          right: -8,
+          child: IconButton.filledTonal(
+            tooltip: '移除图片',
+            onPressed: onClear,
+            style: const ButtonStyle(
+              fixedSize: WidgetStatePropertyAll(Size.square(26)),
+              minimumSize: WidgetStatePropertyAll(Size.square(26)),
+              padding: WidgetStatePropertyAll(EdgeInsets.zero),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: const Icon(Icons.close_rounded, size: 16),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -774,34 +810,6 @@ class _AspectRatioSelector extends StatelessWidget {
   }
 }
 
-class _MetaPill extends StatelessWidget {
-  const _MetaPill({required this.label, this.maxWidth});
-
-  final String label;
-  final double? maxWidth;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      constraints: BoxConstraints(maxWidth: maxWidth ?? 160),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
-      ),
-    );
-  }
-}
-
 class _ImagePreviewButton extends StatelessWidget {
   const _ImagePreviewButton({required this.image});
 
@@ -809,37 +817,80 @@ class _ImagePreviewButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Semantics(
-      button: true,
-      label: '查看图片',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _openImageViewer(context, image),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _ImagePreview(image: image),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colors.surface.withValues(alpha: 0.86),
-                    shape: BoxShape.circle,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width * 0.78;
+        return Semantics(
+          button: true,
+          label: '查看图片',
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _openImageViewer(context, image),
+              child: Stack(
+                children: [
+                  _ImagePreview(
+                    image: image,
+                    fit: BoxFit.contain,
+                    width: width,
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      Icons.open_in_full_rounded,
-                      size: 18,
-                      color: colors.onSurface,
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: _ImageOverlayButton(
+                      tooltip: '保存到相册',
+                      icon: Icons.download_rounded,
+                      onPressed: () {
+                        _saveImageToGallery(context, image);
+                      },
                     ),
                   ),
-                ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: _ImageOverlayButton(
+                      tooltip: '查看图片',
+                      icon: Icons.open_in_full_rounded,
+                      onPressed: () => _openImageViewer(context, image),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ImageOverlayButton extends StatelessWidget {
+  const _ImageOverlayButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: colors.surface.withValues(alpha: 0.86),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Icon(icon, size: 18, color: colors.onSurface),
           ),
         ),
       ),
@@ -883,7 +934,12 @@ class _ImageViewerDialog extends StatelessWidget {
                 child: SizedBox(
                   width: constraints.maxWidth,
                   height: constraints.maxHeight,
-                  child: _ImagePreview(image: image, fit: BoxFit.contain),
+                  child: _ImagePreview(
+                    image: image,
+                    fit: BoxFit.contain,
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                  ),
                 ),
               );
             },
@@ -895,10 +951,17 @@ class _ImageViewerDialog extends StatelessWidget {
 }
 
 class _ImagePreview extends StatelessWidget {
-  const _ImagePreview({required this.image, this.fit = BoxFit.cover});
+  const _ImagePreview({
+    required this.image,
+    this.fit = BoxFit.cover,
+    this.width,
+    this.height,
+  });
 
   final GeneratedImage image;
   final BoxFit fit;
+  final double? width;
+  final double? height;
 
   @override
   Widget build(BuildContext context) {
@@ -908,15 +971,23 @@ class _ImagePreview extends StatelessWidget {
       try {
         bytes = base64Decode(b64);
       } catch (_) {
-        return const Center(child: Text('图片数据无法解析'));
+        return SizedBox(
+          width: width,
+          height: height,
+          child: const Center(child: Text('图片数据无法解析')),
+        );
       }
-      return Image.memory(bytes, fit: fit);
+      return Image.memory(bytes, width: width, height: height, fit: fit);
     }
     final url = image.url;
     if (url != null && url.isNotEmpty) {
-      return Image.network(url, fit: fit);
+      return Image.network(url, width: width, height: height, fit: fit);
     }
-    return const Center(child: Text('接口未返回可显示图片'));
+    return SizedBox(
+      width: width,
+      height: height,
+      child: const Center(child: Text('接口未返回可显示图片')),
+    );
   }
 }
 

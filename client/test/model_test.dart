@@ -194,6 +194,8 @@ void main() {
       status: GeneratedImageStatus.failed,
       responseId: 'resp_1',
       imageGenerationCallId: 'ig_1',
+      sourceB64Json: 'c291cmNl',
+      sourceMimeType: 'image/png',
       errorMessage: 'request failed',
     );
 
@@ -203,6 +205,8 @@ void main() {
     expect(restored.sessionId, 'is1');
     expect(restored.responseId, 'resp_1');
     expect(restored.imageGenerationCallId, 'ig_1');
+    expect(restored.sourceB64Json, 'c291cmNl');
+    expect(restored.sourceMimeType, 'image/png');
     expect(restored.errorMessage, 'request failed');
   });
 

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -412,6 +414,16 @@ class AppState extends ChangeNotifier {
     final id = _uuid.v4();
     final history = imageContextHistory(images, imageSession.id);
     final requestPrompt = buildImageContextPrompt(value, history);
+    final List<int> sourceBytes;
+    try {
+      sourceBytes = await image.readAsBytes();
+    } catch (error) {
+      lastError = '图片读取失败：$error';
+      notifyListeners();
+      return;
+    }
+    final sourceMimeType =
+        image.mimeType ?? _imageMimeTypeForFileName(image.name);
     final pending = GeneratedImage(
       id: id,
       sessionId: imageSession.id,
@@ -420,6 +432,8 @@ class AppState extends ChangeNotifier {
       createdAt: now,
       status: GeneratedImageStatus.pending,
       sourceFileName: image.name,
+      sourceB64Json: base64Encode(sourceBytes),
+      sourceMimeType: sourceMimeType,
     );
     images = [pending, ...images];
     isWorkingOnImage = true;
@@ -439,6 +453,8 @@ class AppState extends ChangeNotifier {
         createdAt: pending.createdAt,
         status: GeneratedImageStatus.completed,
         sourceFileName: pending.sourceFileName,
+        sourceB64Json: pending.sourceB64Json,
+        sourceMimeType: pending.sourceMimeType,
       );
       _replaceImage(completed);
       await _storage.saveImage(completed);
@@ -500,4 +516,14 @@ class AppState extends ChangeNotifier {
     }
     return '${compact.substring(0, 24)}...';
   }
+}
+
+String _imageMimeTypeForFileName(String name) {
+  final extension = name.split('.').last.toLowerCase();
+  return switch (extension) {
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'webp' => 'image/webp',
+    'gif' => 'image/gif',
+    _ => 'image/png',
+  };
 }
