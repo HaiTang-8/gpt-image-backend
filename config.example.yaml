@@ -1,0 +1,67 @@
+# 服务监听地址。默认监听本机 8080 端口。
+addr: ":8080"
+
+# SQLite 数据库文件路径。目录不存在时会自动创建。
+database_path: data/proxy.db
+
+# 请求上游模型接口的超时时间，格式使用 Go duration，例如 30s、2m、5m。
+request_timeout: 5m
+
+# 当模型名没有匹配到具体上游时使用的默认上游 id。
+default_upstream: openai
+
+# 客户端未指定 model 时，聊天接口自动补充的默认模型。
+default_chat_model: gpt-5.5
+
+# 客户端未指定 model 时，图片接口自动补充的默认模型。
+default_image_model: gpt-image-2
+
+log:
+  # 是否记录请求体。开发环境建议开启，生产环境请按隐私要求调整。
+  store_request_body: true
+
+  # 是否记录响应体。响应可能较大，默认关闭。
+  store_response_body: false
+
+  # 是否保存上传文件，例如图片编辑接口的图片文件。
+  store_files: false
+
+  # 上传文件保存目录，仅在 store_files 为 true 时使用。
+  file_storage_dir: data/uploads
+
+  # 单次记录的最大请求体字节数，超过后会截断。
+  max_body_bytes: 1048576
+
+# 调用本代理服务时使用的密钥列表。
+api_keys:
+  - # 用户 id，会写入请求日志。
+    user_id: default
+
+    # 用户显示名。
+    name: Default User
+
+    # 客户端请求本服务时使用的 Bearer Token。
+    key: replace-with-proxy-key
+
+# 上游 OpenAI 兼容服务列表。
+upstreams:
+  - # 上游 id，可被 default_upstream 引用。
+    id: openai
+
+    # 上游接口基础地址。
+    base_url: https://api.openai.com/v1
+
+    # 调用上游接口时使用的真实 API Key。
+    api_key: replace-with-upstream-key
+
+    # 匹配到这些模型名时走当前上游，支持后缀通配符 *。
+    models:
+      - gpt-*
+      - chatgpt-*
+
+  - id: images
+    base_url: https://api.openai.com/v1
+    api_key: replace-with-upstream-key
+    models:
+      - dall-e*
+      - gpt-image*

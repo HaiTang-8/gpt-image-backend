@@ -1,0 +1,28 @@
+# Local config and secrets
+config.yaml
+.env
+.env.*
+!.env.example
+
+# Runtime data
+/data/
+/internal/proxy/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Build and test output
+bin/
+build/
+dist/
+coverage.out
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
