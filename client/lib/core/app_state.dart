@@ -276,15 +276,86 @@ class AppState extends ChangeNotifier {
     _replaceSession(session);
     notifyListeners();
 
+    await _streamAssistantMessage(
+      initialSession: session,
+      assistantMessageId: assistantMessage.id,
+    );
+  }
+
+  Future<void> retryMessage(String messageId) async {
+    if (isSending) {
+      return;
+    }
+    if (!isConfigured) {
+      lastError = '请先完成服务配置';
+      notifyListeners();
+      return;
+    }
+    final current = selectedSession;
+    if (current == null) {
+      return;
+    }
+    final failedIndex = current.messages.indexWhere(
+      (message) =>
+          message.id == messageId &&
+          message.role == MessageRole.assistant &&
+          message.failed,
+    );
+    if (failedIndex <= 0) {
+      return;
+    }
+
+    var userIndex = -1;
+    for (var index = failedIndex - 1; index >= 0; index--) {
+      final message = current.messages[index];
+      if (message.role == MessageRole.user && message.hasPayload) {
+        userIndex = index;
+        break;
+      }
+    }
+    if (userIndex < 0) {
+      return;
+    }
+
+    isSending = true;
+    lastError = null;
+    final now = DateTime.now();
+    final assistantMessage = ChatMessage(
+      id: _uuid.v4(),
+      role: MessageRole.assistant,
+      content: '',
+      createdAt: now,
+    );
+    final session = current.copyWith(
+      messages: [...current.messages.take(userIndex + 1), assistantMessage],
+      updatedAt: now,
+    );
+    _replaceSession(session);
+    notifyListeners();
+
+    await _streamAssistantMessage(
+      initialSession: session,
+      assistantMessageId: assistantMessage.id,
+    );
+  }
+
+  Future<void> _streamAssistantMessage({
+    required ChatSession initialSession,
+    required String assistantMessageId,
+  }) async {
+    var session = initialSession;
     try {
       await for (final chunk in _api().streamChat(messages: session.messages)) {
-        final latest = selectedSession;
+        final latest = _sessionById(session.id);
         if (latest == null) {
           continue;
         }
         final messages = latest.messages.map((message) {
-          if (message.id == assistantMessage.id) {
-            return message.copyWith(content: message.content + chunk);
+          if (message.id == assistantMessageId) {
+            return message.copyWith(
+              content: message.content + chunk,
+              failed: false,
+            );
           }
           return message;
         }).toList();
@@ -297,10 +368,10 @@ class AppState extends ChangeNotifier {
       }
     } catch (error) {
       lastError = error.toString();
-      final latest = selectedSession;
+      final latest = _sessionById(session.id);
       if (latest != null) {
         final messages = latest.messages.map((message) {
-          if (message.id == assistantMessage.id) {
+          if (message.id == assistantMessageId) {
             final content = message.content.isEmpty
                 ? '请求失败：$error'
                 : '${message.content}\n\n请求失败：$error';
@@ -507,6 +578,15 @@ class AppState extends ChangeNotifier {
       ...sessions.where((session) => session.id != updated.id),
     ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     selectedSessionId = updated.id;
+  }
+
+  ChatSession? _sessionById(String id) {
+    for (final session in sessions) {
+      if (session.id == id) {
+        return session;
+      }
+    }
+    return null;
   }
 
   String _titleFrom(String value) {

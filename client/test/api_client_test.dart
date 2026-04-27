@@ -144,6 +144,57 @@ void main() {
     });
   });
 
+  test('streamChat skips failed messages in request context', () async {
+    late Map<String, dynamic> requestBody;
+    final now = DateTime.now();
+    final api = ProxyApiClient(
+      baseUrl: 'http://proxy.test',
+      apiKey: 'proxy-key',
+      client: MockClient((request) async {
+        requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          'data: {"choices":[{"delta":{"content":"ok"}}]}\n'
+          'data: [DONE]\n',
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+
+    await api
+        .streamChat(
+          messages: [
+            ChatMessage(
+              id: 'u1',
+              role: MessageRole.user,
+              content: 'hello',
+              createdAt: now,
+            ),
+            ChatMessage(
+              id: 'a1',
+              role: MessageRole.assistant,
+              content: '请求失败：timeout',
+              createdAt: now,
+              failed: true,
+            ),
+            ChatMessage(
+              id: 'u2',
+              role: MessageRole.user,
+              content: 'continue',
+              createdAt: now,
+            ),
+          ],
+        )
+        .drain<void>();
+
+    final messages = requestBody['messages'] as List<dynamic>;
+
+    expect(messages, [
+      {'role': 'user', 'content': 'hello'},
+      {'role': 'user', 'content': 'continue'},
+    ]);
+  });
+
   test('generateImage sends Responses image generation tool request', () async {
     late Map<String, dynamic> requestBody;
     final api = ProxyApiClient(

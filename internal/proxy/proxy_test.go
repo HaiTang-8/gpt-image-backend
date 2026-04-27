@@ -364,6 +364,45 @@ func TestAuthTestRequiresValidAPIKey(t *testing.T) {
 	}
 }
 
+func TestHealthzAllowsCORS(t *testing.T) {
+	cfg := testConfig(t, "http://example.com/v1")
+	db := testStore(t, cfg)
+	handler := New(cfg, db, http.DefaultTransport)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("allow origin = %q, want *", got)
+	}
+}
+
+func TestCORSPreflight(t *testing.T) {
+	cfg := testConfig(t, "http://example.com/v1")
+	db := testStore(t, cfg)
+	handler := New(cfg, db, http.DefaultTransport)
+
+	req := httptest.NewRequest(http.MethodOptions, "/v1/auth/test", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, OPTIONS" {
+		t.Fatalf("allow methods = %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Content-Type") {
+		t.Fatalf("allow headers = %q", got)
+	}
+}
+
 func TestAdminIndexServed(t *testing.T) {
 	cfg := testConfig(t, "http://example.com/v1")
 	db := testStore(t, cfg)

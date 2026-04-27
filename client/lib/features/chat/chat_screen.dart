@@ -70,7 +70,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemBuilder: (context, index) {
                           final message = session
                               .messages[session.messages.length - 1 - index];
-                          return _MessageBubble(message: message);
+                          return _MessageBubble(
+                            message: message,
+                            isSending: app.isSending,
+                            onRetry: message.failed
+                                ? () => _retry(app, message)
+                                : null,
+                          );
                         },
                       );
                     },
@@ -96,6 +102,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final attachments = List<ChatAttachment>.unmodifiable(_attachments);
     setState(_attachments.clear);
     await app.sendMessage(text, attachments: attachments);
+    _jumpToLatestAfterLayout();
+  }
+
+  Future<void> _retry(AppState app, ChatMessage message) async {
+    await app.retryMessage(message.id);
     _jumpToLatestAfterLayout();
   }
 
@@ -352,9 +363,15 @@ class _EmptyChat extends StatelessWidget {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({
+    required this.message,
+    required this.isSending,
+    this.onRetry,
+  });
 
   final ChatMessage message;
+  final bool isSending;
+  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -447,9 +464,36 @@ class _MessageBubble extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     )
                   : null,
-              child: GptMarkdown(
-                message.content.isEmpty ? '正在思考...' : message.content,
-                style: TextStyle(color: foreground, height: 1.42),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GptMarkdown(
+                    message.content.isEmpty ? '正在思考...' : message.content,
+                    style: TextStyle(color: foreground, height: 1.42),
+                  ),
+                  if (message.failed && onRetry != null) ...[
+                    const SizedBox(height: 10),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: colors.onErrorContainer,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: isSending
+                          ? null
+                          : () {
+                              onRetry?.call();
+                            },
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('重试'),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),

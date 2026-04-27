@@ -76,7 +76,7 @@ class ProxyApiClient {
     request.body = jsonEncode({
       'stream': true,
       'messages': messages
-          .where((message) => message.hasPayload)
+          .where((message) => message.hasPayload && !message.failed)
           .map(
             (message) => {
               'role': message.role.wireName,
